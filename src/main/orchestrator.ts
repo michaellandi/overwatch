@@ -424,7 +424,7 @@ export class Orchestrator {
     const buffer = this.buffers.get(tabId)
     if (buffer) {
       // Strip ANSI escape codes for clean pattern matching
-      const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+      const clean = data.replace(/\x1b\[[?!>]?[0-9;]*[a-zA-Z~]/g, '').replace(/\x1b[()][0-9A-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
       const lines = clean.split(/\r?\n/).filter(l => l.trim().length > 0)
       for (const line of lines) buffer.push(line)
 
