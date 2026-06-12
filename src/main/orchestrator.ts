@@ -4,7 +4,7 @@ import type { IPty } from 'node-pty'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import type { Session, Tab } from '../shared/types'
-import { RingBuffer, StuckDetector } from './stuck-detector'
+import { RingBuffer, ApprovalDetector } from './stuck-detector'
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime'
 import { fromIni } from '@aws-sdk/credential-providers'
 
@@ -19,8 +19,8 @@ async function summarizeBlocked(sessionName: string, lastLines: string[]): Promi
   try {
     const resp = await summarizeClient.send(new ConverseCommand({
       modelId: 'us.anthropic.claude-sonnet-4-6',
-      messages: [{ role: 'user', content: [{ text: `In 10 words or less, summarize why this coding agent session is blocked. No markdown formatting. Plain text only. Here's the last output:\n${lastLines.join('\n')}` }] }],
-      inferenceConfig: { maxTokens: 50 }
+      messages: [{ role: 'user', content: [{ text: `Summarize what this AI coding agent is trying to do and what it needs approval for. Be specific about the tool/action needing approval and the goal. One short sentence, no markdown. Here's the recent output:\n${lastLines.join('\n')}` }] }],
+      inferenceConfig: { maxTokens: 150 }
     }))
     const text = (resp.output?.message?.content?.[0] as { text?: string })?.text
     return text?.trim() ?? 'waiting for input'
@@ -59,7 +59,7 @@ export class Orchestrator {
   }
   private earlyOutput = new Map<string, string[]>() // keyed by tabId
   private rendererReady = new Set<string>() // tabIds whose renderer has connected
-  private detector = new StuckDetector()
+  private detector = new ApprovalDetector()
   private checkInterval: NodeJS.Timeout | null = null
   private statePath: string = ''
 
@@ -246,6 +246,15 @@ export class Orchestrator {
   tellSession(sessionId: string, message: string, tabId?: string): void {
     const session = this.findSession(sessionId)
     if (!session) return
+    if (session.state === 'blocked' && session.blockedReason === 'approval') {
+      session.state = 'working'
+      session.blockedReason = undefined
+      // Clear buffers so old approval text doesn't re-trigger
+      for (const tab of session.tabs) {
+        this.buffers.get(tab.id)?.clear()
+      }
+      this.save()
+    }
     const target = tabId ?? session.activeTabId
     const pty = this.ptys.get(target)
     if (pty) pty.write(message + '\r')
@@ -297,18 +306,18 @@ export class Orchestrator {
 
     if (lower.includes('status') || lower.includes('what') || lower.includes('how')) {
       const running = sessions.filter(s => s.state === 'working')
-      const stuck = sessions.filter(s => s.state === 'blocked')
+      const blocked = sessions.filter(s => s.state === 'blocked')
       const parts = [`${sessions.length} sessions total.`]
       if (running.length) parts.push(`Running: ${running.map(s => s.name).join(', ')}`)
-      if (stuck.length) parts.push(`Stuck: ${stuck.map(s => s.name).join(', ')}`)
+      if (blocked.length) parts.push(`Blocked: ${blocked.map(s => s.name).join(', ')}`)
       if (sessions.length === 0) parts.push('No active sessions.')
       return parts.join('\n')
     }
 
-    if (lower.includes('stuck')) {
-      const stuck = sessions.filter(s => s.state === 'blocked')
-      if (stuck.length === 0) return 'No sessions are currently stuck.'
-      return stuck.map(s => `${s.name}: stuck`).join('\n')
+    if (lower.includes('stuck') || lower.includes('blocked')) {
+      const blocked = sessions.filter(s => s.state === 'blocked')
+      if (blocked.length === 0) return 'No sessions are currently blocked.'
+      return blocked.map(s => `${s.name}: ${s.blockedReason ?? 'blocked'}`).join('\n')
     }
 
     if (lower.includes('peek') || lower.includes('show')) {
@@ -317,7 +326,7 @@ export class Orchestrator {
       return `Couldn't find a matching session. Active: ${sessions.map(s => s.name).join(', ')}`
     }
 
-    return `I have ${sessions.length} sessions. Ask me about their status, what's stuck, or peek at a specific session.`
+    return `I have ${sessions.length} sessions. Ask me about their status, what's blocked, or peek at a specific session.`
   }
 
   private spawnTab(tabId: string): void {
@@ -411,11 +420,11 @@ export class Orchestrator {
   private onTabActivity(tabId: string, data: string): void {
     // Find the parent session
     for (const session of this.sessions.values()) {
-      if (session.tabs.some(t => t.id === tabId)) {
-        session.lastActivityAt = Date.now()
-        if (session.state === 'blocked') {
-          session.state = 'working'
-          this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+      const tab = session.tabs.find(t => t.id === tabId)
+      if (tab) {
+        // Only agent tab activity prevents idle detection
+        if (tab.type === 'agent') {
+          session.lastActivityAt = Date.now()
         }
         break
       }
@@ -425,8 +434,48 @@ export class Orchestrator {
     if (buffer) {
       // Strip ANSI escape codes for clean pattern matching
       const clean = data.replace(/\x1b\[[?!>]?[0-9;]*[a-zA-Z~]/g, '').replace(/\x1b[()][0-9A-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
-      const lines = clean.split(/\r?\n/).filter(l => l.trim().length > 0)
+      const lines = clean.split(/\r?\n|\r/).filter(l => l.trim().length > 0)
+      if (lines.length === 0) return // No substantive content
       for (const line of lines) buffer.push(line)
+
+      // If session is blocked, check if this new output means the user responded
+      for (const session of this.sessions.values()) {
+        const tab = session.tabs.find(t => t.id === tabId)
+        if (tab?.type === 'agent' && session.state === 'blocked') {
+          // Only resume if new output does NOT contain an approval prompt
+          const result = this.detector.analyze(buffer)
+          if (!result.approval) {
+            session.state = 'working'
+            session.blockedReason = undefined
+            buffer.clear()
+            this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+          }
+          break
+        }
+      }
+
+      // Check for approval prompt immediately on new data
+      for (const session of this.sessions.values()) {
+        const tab = session.tabs.find(t => t.id === tabId)
+        if (tab && session.state === 'working') {
+          const result = this.detector.analyze(buffer)
+          if (result.approval) {
+            session.state = 'blocked'
+            session.blockedReason = 'approval'
+            this.save()
+            const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
+            summarizeBlocked(session.name, lastLines).then(summary => {
+              this.notify({
+                type: 'session:approval',
+                sessionId: session.id,
+                tabId: tab.id,
+                summary: `⚡ **${session.name}** [${tab.name}] — ${summary}`
+              })
+            })
+          }
+          break
+        }
+      }
 
       // Track thinking state - only emit on transitions
       for (const session of this.sessions.values()) {
@@ -458,6 +507,7 @@ export class Orchestrator {
     for (const session of this.sessions.values()) {
       if (session.state === 'done') continue
       if (skipIds?.has(session.id)) continue
+      if (!session.tabs.some(t => t.type === 'agent')) continue
 
       if (now - session.lastActivityAt > HEARTBEAT_TIMEOUT_MS && session.state !== 'blocked') {
         session.state = 'blocked'
@@ -476,26 +526,14 @@ export class Orchestrator {
           const buffer = this.buffers.get(tab.id)
           if (buffer) {
             const result = this.detector.analyze(buffer)
-            if (result.stuck) {
+            if (result.approval) {
               session.state = 'blocked'
-              session.blockedReason = 'stuck'
+              session.blockedReason = 'approval'
               this.save()
-              this.notify({
-                type: 'session:stuck',
-                sessionId: session.id,
-                tabId: tab.id,
-                summary: `⚡ **${session.name}** [${tab.name}] — ${result.reason}`
-              })
-              break
-            }
-            if (result.waiting) {
-              session.state = 'blocked'
-              session.blockedReason = 'waiting'
-              this.save()
-              const lastLines = buffer.last(30).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()))
+              const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
               summarizeBlocked(session.name, lastLines).then(summary => {
                 this.notify({
-                  type: 'session:waiting',
+                  type: 'session:approval',
                   sessionId: session.id,
                   tabId: tab.id,
                   summary: `⚡ **${session.name}** [${tab.name}] — ${summary}`
@@ -519,7 +557,7 @@ export class Orchestrator {
     const win = BrowserWindow.getAllWindows()[0]
     win?.webContents.send('orchestrator:event', event)
     // Only inject blocked events into agent history
-    if (event.type === 'session:stuck' || event.type === 'session:waiting' || event.type === 'session:idle') {
+    if (event.type === 'session:approval' || event.type === 'session:idle') {
       this.eventListener?.(event.summary, event.sessionId, event.tabId)
     }
   }
@@ -558,13 +596,8 @@ export class Orchestrator {
         const hasTabs = session.tabs.length > 0
 
         if (wasActive || hasTabs) {
-          const idleTime = Date.now() - session.lastActivityAt
-          if (idleTime > HEARTBEAT_TIMEOUT_MS) {
-            session.state = 'blocked'
-            session.blockedReason = 'idle'
-          } else {
-            session.state = 'working'
-          }
+          session.lastActivityAt = Date.now()
+          session.state = 'working'
           toResume.push(session)
         } else {
           session.state = 'done'

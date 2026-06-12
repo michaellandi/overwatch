@@ -12,7 +12,7 @@ export interface Session {
   goal: string
   workingDir: string
   state: 'working' | 'blocked' | 'done'
-  blockedReason?: 'idle' | 'stuck' | 'waiting'
+  blockedReason?: 'idle' | 'approval'
   thinking?: boolean
   tabs: Tab[]
   activeTabId: string

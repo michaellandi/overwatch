@@ -25,20 +25,16 @@ describe('Event plumbing', () => {
       expect(source).toContain("type: 'session:idle'")
     })
 
-    it('emits session:stuck on error pattern detection', () => {
-      expect(source).toContain("type: 'session:stuck'")
-    })
-
-    it('emits session:waiting on agent idle prompt detection', () => {
-      expect(source).toContain("type: 'session:waiting'")
+    it('emits session:approval on agent prompt detection', () => {
+      expect(source).toContain("type: 'session:approval'")
     })
   })
 
   describe('Event filtering for agent injection', () => {
     const source = readFileSync('./src/main/orchestrator.ts', 'utf-8')
 
-    it('only injects session:stuck, session:waiting, session:idle into agent', () => {
-      expect(source).toContain("event.type === 'session:stuck' || event.type === 'session:waiting' || event.type === 'session:idle'")
+    it('only injects session:approval and session:idle into agent', () => {
+      expect(source).toContain("event.type === 'session:approval' || event.type === 'session:idle'")
     })
 
     it('does not inject session:created into agent', () => {
@@ -51,16 +47,9 @@ describe('Event plumbing', () => {
   describe('Event includes sessionId and tabId', () => {
     const source = readFileSync('./src/main/orchestrator.ts', 'utf-8')
 
-    it('session:waiting includes tabId', () => {
-      // Find the session:waiting notify block
-      const waitingIdx = source.indexOf("type: 'session:waiting'")
-      const block = source.slice(waitingIdx - 100, waitingIdx + 100)
-      expect(block).toContain('tabId: tab.id')
-    })
-
-    it('session:stuck includes tabId', () => {
-      const stuckIdx = source.indexOf("type: 'session:stuck'")
-      const block = source.slice(stuckIdx - 100, stuckIdx + 100)
+    it('session:approval includes tabId', () => {
+      const approvalIdx = source.indexOf("type: 'session:approval'")
+      const block = source.slice(approvalIdx - 100, approvalIdx + 100)
       expect(block).toContain('tabId: tab.id')
     })
 

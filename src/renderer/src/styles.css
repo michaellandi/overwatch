@@ -250,11 +250,10 @@ body {
 .session-item:hover { background: rgba(255,255,255,0.05); }
 .session-item.active { background: rgba(79,195,247,0.15); }
 
-.session-item.working .state-icon { color: var(--running); }
+.session-item.working .state-icon { color: var(--text); }
 .session-item.blocked .state-icon { color: var(--stuck); }
 .session-item.blocked-idle .state-icon { color: #e5c07b; }
-.session-item.blocked-waiting .state-icon { color: var(--stuck); }
-.session-item.blocked-stuck .state-icon { color: var(--stuck); }
+.session-item.blocked-approval .state-icon { color: var(--stuck); }
 .session-item.done .state-icon { color: var(--done); }
 
 .empty { color: var(--text-dim); font-size: 13px; }

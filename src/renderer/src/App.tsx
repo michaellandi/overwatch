@@ -36,8 +36,8 @@ export function App(): React.ReactElement {
         // For state changes, just update that session's state
         setSessions(prev => prev.map(s => {
           if (s.id !== e.sessionId) return s
-          const isBlocked = e.type === 'session:stuck' || e.type === 'session:waiting' || e.type === 'session:idle'
-          const blockedReason = e.type === 'session:idle' ? 'idle' : e.type === 'session:stuck' ? 'stuck' : e.type === 'session:waiting' ? 'waiting' : undefined
+          const isBlocked = e.type === 'session:approval' || e.type === 'session:idle'
+          const blockedReason = e.type === 'session:idle' ? 'idle' : e.type === 'session:approval' ? 'approval' : undefined
           if (isBlocked) return { ...s, state: 'blocked' as const, blockedReason }
           if (e.type === 'session:resumed') return { ...s, state: 'working' as const, blockedReason: undefined }
           return s

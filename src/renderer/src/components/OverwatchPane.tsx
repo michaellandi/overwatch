@@ -98,7 +98,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
     window.overwatch.orchestrator.onEvent((event: unknown) => {
       const e = event as { type: string; summary?: string; sessionId?: string; tabId?: string }
       // Only show actionable events in chat pane
-      if (e.type === 'session:waiting' || e.type === 'session:stuck') {
+      if (e.type === 'session:approval') {
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(),
           timestamp: Date.now(),
@@ -109,7 +109,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
         }])
       }
       // Play ding for blocked events if enabled
-      if (e.type === 'session:waiting' || e.type === 'session:stuck' || e.type === 'session:idle') {
+      if (e.type === 'session:approval' || e.type === 'session:idle') {
         if (localStorage.getItem('ow-sound-enabled') !== 'false') {
           playDing()
         }
