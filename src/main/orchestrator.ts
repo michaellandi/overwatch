@@ -88,6 +88,20 @@ export class Orchestrator {
     })
 
     ipcMain.on('terminal:write', (_e, tabId: string, data: string) => {
+      // User typing into an approval-blocked terminal means they accepted — unblock immediately.
+      // Don't wait for output analysis: the TUI redraws often echo the prompt text,
+      // which would keep the detector firing even after acceptance.
+      for (const session of this.sessions.values()) {
+        const tab = session.tabs.find(t => t.id === tabId)
+        if (tab?.type === 'agent' && session.state === 'blocked' && session.blockedReason === 'approval') {
+          session.state = 'working'
+          session.blockedReason = undefined
+          for (const t of session.tabs) this.buffers.get(t.id)?.clear()
+          this.save()
+          this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+          break
+        }
+      }
       this.ptys.get(tabId)?.write(data)
     })
 
@@ -436,6 +450,15 @@ export class Orchestrator {
       const clean = data.replace(/\x1b\[[?!>]?[0-9;]*[a-zA-Z~]/g, '').replace(/\x1b[()][0-9A-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
       const lines = clean.split(/\r?\n|\r/).filter(l => l.trim().length > 0)
       if (lines.length === 0) return // No substantive content
+      // For approval-blocked sessions, discard stale approval lines before evaluating
+      // fresh output — otherwise the old prompt text keeps the detector returning true.
+      for (const session of this.sessions.values()) {
+        const tab = session.tabs.find(t => t.id === tabId)
+        if (tab?.type === 'agent' && session.state === 'blocked' && session.blockedReason === 'approval') {
+          buffer.clear()
+          break
+        }
+      }
       for (const line of lines) buffer.push(line)
 
       // If session is blocked, check if this new output means the user responded
