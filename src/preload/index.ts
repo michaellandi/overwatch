@@ -34,21 +34,31 @@ contextBridge.exposeInMainWorld('overwatch', {
   },
   orchestrator: {
     onEvent: (callback: (event: unknown) => void) => {
-      ipcRenderer.on('orchestrator:event', (_e, event) => callback(event))
+      const handler = (_e: unknown, event: unknown): void => callback(event)
+      ipcRenderer.on('orchestrator:event', handler)
+      return () => { ipcRenderer.removeListener('orchestrator:event', handler) }
     },
     chat: (message: string) => ipcRenderer.invoke('overwatch:chat', message),
     cancel: (messageId: string) => ipcRenderer.invoke('overwatch:cancel', messageId),
     onChatStream: (callback: (chunk: string) => void) => {
-      ipcRenderer.on('overwatch:chat-stream', (_e, chunk) => callback(chunk))
+      const handler = (_e: unknown, chunk: string): void => callback(chunk)
+      ipcRenderer.on('overwatch:chat-stream', handler)
+      return () => { ipcRenderer.removeListener('overwatch:chat-stream', handler) }
     },
     onChatDone: (callback: () => void) => {
-      ipcRenderer.on('overwatch:chat-done', () => callback())
+      const handler = (): void => callback()
+      ipcRenderer.on('overwatch:chat-done', handler)
+      return () => { ipcRenderer.removeListener('overwatch:chat-done', handler) }
     },
     onToolCall: (callback: (data: { name: string; input: string }) => void) => {
-      ipcRenderer.on('overwatch:tool-call', (_e, data) => callback(data))
+      const handler = (_e: unknown, data: { name: string; input: string }): void => callback(data)
+      ipcRenderer.on('overwatch:tool-call', handler)
+      return () => { ipcRenderer.removeListener('overwatch:tool-call', handler) }
     },
     onToolResult: (callback: (data: { name: string; result: string }) => void) => {
-      ipcRenderer.on('overwatch:tool-result', (_e, data) => callback(data))
+      const handler = (_e: unknown, data: { name: string; result: string }): void => callback(data)
+      ipcRenderer.on('overwatch:tool-result', handler)
+      return () => { ipcRenderer.removeListener('overwatch:tool-result', handler) }
     }
   },
   settings: {

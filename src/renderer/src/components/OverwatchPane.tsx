@@ -95,7 +95,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
   }, [messages])
 
   useEffect(() => {
-    window.overwatch.orchestrator.onEvent((event: unknown) => {
+    const unsubEvent = window.overwatch.orchestrator.onEvent((event: unknown) => {
       const e = event as { type: string; summary?: string; sessionId?: string; tabId?: string }
       // Only show actionable events in chat pane
       if (e.type === 'session:approval') {
@@ -116,7 +116,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
       }
     })
 
-    window.overwatch.orchestrator.onChatStream((chunk: string) => {
+    const unsubChatStream = window.overwatch.orchestrator.onChatStream((chunk: string) => {
       setMessages(prev => {
         // Find the last streaming orchestrator message
         const idx = [...prev].reverse().findIndex(m => m.from === 'orchestrator' && m.streaming)
@@ -130,7 +130,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
       })
     })
 
-    window.overwatch.orchestrator.onChatDone(() => {
+    const unsubChatDone = window.overwatch.orchestrator.onChatDone(() => {
       setIsStreaming(false)
       setMessages(prev =>
         prev
@@ -139,7 +139,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
       )
     })
 
-    window.overwatch.orchestrator.onToolCall((data: { name: string; input: string }) => {
+    const unsubToolCall = window.overwatch.orchestrator.onToolCall((data: { name: string; input: string }) => {
       let inputSummary = ''
       try { const parsed = JSON.parse(data.input); inputSummary = Object.entries(parsed).map(([k, v]) => `${k}: ${String(v).slice(0, 50)}`).join(', ') } catch {}
       setMessages(prev => [
@@ -156,7 +156,7 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
       ])
     })
 
-    window.overwatch.orchestrator.onToolResult((data: { name: string; result: string }) => {
+    const unsubToolResult = window.overwatch.orchestrator.onToolResult((data: { name: string; result: string }) => {
       // Append result to the last tool call message for this tool
       setMessages(prev => {
         const idx = [...prev].reverse().findIndex(m => m.content.startsWith(`__TOOL__${data.name}__`) && m.content.endsWith('__'))
@@ -172,6 +172,14 @@ export function OverwatchPane({ onSelectSession }: { onSelectSession?: (id: stri
         return prev
       })
     })
+
+    return () => {
+      unsubEvent()
+      unsubChatStream()
+      unsubChatDone()
+      unsubToolCall()
+      unsubToolResult()
+    }
   }, [])
 
   const send = useCallback(() => {

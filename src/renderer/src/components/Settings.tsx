@@ -36,8 +36,10 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
   const [mcpServers, setMcpServers] = useState<Array<{ name: string; command: string; args?: string[] }>>([])
   const [newMcpName, setNewMcpName] = useState('')
   const [newMcpCommand, setNewMcpCommand] = useState('')
+  const [soundEnabled, setSoundEnabled] = useState(true)
   useEffect(() => {
     if (open) {
+      setSoundEnabled(localStorage.getItem('ow-sound-enabled') !== 'false')
       window.overwatch.settings.get().then(s => {
         setContextDir(s.contextDir)
         if (s.enabledAgents) setEnabledAgents(s.enabledAgents)
@@ -120,7 +122,7 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
             </div>
             <div className="settings-field">
               <label className="toggle-row">
-                <input type="checkbox" defaultChecked={localStorage.getItem('ow-sound-enabled') !== 'false'} onChange={e => localStorage.setItem('ow-sound-enabled', String(e.target.checked))} />
+                <input type="checkbox" checked={soundEnabled} onChange={e => { setSoundEnabled(e.target.checked); localStorage.setItem('ow-sound-enabled', String(e.target.checked)) }} />
                 <span>Play sound when a session is blocked</span>
               </label>
             </div>

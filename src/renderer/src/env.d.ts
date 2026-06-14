@@ -27,13 +27,13 @@ declare global {
         onThinking: (callback: (sessionId: string, thinking: boolean) => void) => () => void
       }
       orchestrator: {
-        onEvent: (callback: (event: unknown) => void) => void
+        onEvent: (callback: (event: unknown) => void) => () => void
         chat: (message: string) => Promise<string>
         cancel: (messageId: string) => Promise<boolean>
-        onChatStream: (callback: (chunk: string) => void) => void
-        onChatDone: (callback: () => void) => void
-        onToolCall: (callback: (data: { name: string; input: string }) => void) => void
-        onToolResult: (callback: (data: { name: string; result: string }) => void) => void
+        onChatStream: (callback: (chunk: string) => void) => () => void
+        onChatDone: (callback: () => void) => () => void
+        onToolCall: (callback: (data: { name: string; input: string }) => void) => () => void
+        onToolResult: (callback: (data: { name: string; result: string }) => void) => () => void
       }
       settings: {
         get: () => Promise<{ contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; awsProfile?: string; awsRegion?: string; isFirstRun?: boolean }>
