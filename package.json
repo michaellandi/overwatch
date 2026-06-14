@@ -1,6 +1,6 @@
 {
   "name": "overwatch",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Orchestrate parallel AI agents from a single pane of glass",
   "author": "Michael Landi",
   "license": "MIT",
