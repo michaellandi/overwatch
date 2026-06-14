@@ -36,7 +36,10 @@ export class RingBuffer {
 // Patterns indicating an agent is waiting for user approval/input
 const APPROVAL_PATTERNS: RegExp[] = [
   // Claude Code prompts
-  /❯\s*$/,
+  // NOTE: bare /❯\s*$/ is intentionally absent — Claude Code uses ❯ as a
+  // general TUI element (tool step bullets, input cursor chrome) on almost
+  // every output line, causing constant false positives. Real permission
+  // menus are caught by /❯\s*(Yes|No|Trust)/ below.
   /\? \(y\/n\)/i,
   /\[Y\/n\]/i,
   /\[y\/N\]/i,
@@ -46,7 +49,7 @@ const APPROVAL_PATTERNS: RegExp[] = [
   /You:\s*$/,
   /⏎/,
   /requires approval/i,
-  /❯\s*(Yes|No|Trust)/,
+  /❯\s*(?:\d+\.\s*)?(Yes|No|Trust)/,
   /Tab to edit/,
   /waiting for your/i,
 ]

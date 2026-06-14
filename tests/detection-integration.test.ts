@@ -124,13 +124,86 @@ describe('Detection integration: Claude Code approval flow', () => {
     expect(result.approval).toBe(true)
   })
 
-  it('detects Claude ❯ at end of output', () => {
+  it('detects Claude permission menu with ❯ Yes (unnumbered)', () => {
     const buf = new RingBuffer(100)
-    simulateDataArrival(buf, 'Done with the task.\r\n')
-    simulateDataArrival(buf, '❯\r\n')
+    simulateDataArrival(buf, 'Do you want to run this command?\r\n')
+    simulateDataArrival(buf, '\x1b[1m❯\x1b[22m Yes\r\n  No\r\n  Always allow\r\n')
 
     const result = detector.analyze(buf)
     expect(result.approval).toBe(true)
+  })
+
+  it('detects Claude permission menu with ❯ No highlighted (unnumbered)', () => {
+    const buf = new RingBuffer(100)
+    simulateDataArrival(buf, '  Yes\r\n\x1b[1m❯\x1b[22m No\r\n  Always allow\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(true)
+  })
+
+  it('detects Claude numbered permission menu: ❯ 1. Yes', () => {
+    // Real Claude Code prompt: "Do you want to proceed? ❯ 1. Yes  2. Yes, and don't ask...  3. No"
+    const buf = new RingBuffer(100)
+    simulateDataArrival(buf, ' Do you want to proceed?\r\n')
+    simulateDataArrival(buf, ' \x1b[1m❯\x1b[22m 1. Yes\r\n')
+    simulateDataArrival(buf, '   2. Yes, and don\'t ask again for Web Search commands\r\n')
+    simulateDataArrival(buf, '   3. No\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(true)
+  })
+
+  it('detects repaint chunk that only has ❯ 1. Yes (no "Do you want to" line)', () => {
+    // After buffer.clear() on the next repaint, only the menu lines remain.
+    // This is what caused the session to immediately flip back to working.
+    const buf = new RingBuffer(100)
+    simulateDataArrival(buf, ' \x1b[1m❯\x1b[22m 1. Yes\r\n')
+    simulateDataArrival(buf, '   2. Yes, and don\'t ask again\r\n')
+    simulateDataArrival(buf, '   3. No\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(true)
+  })
+
+  it('detects ❯ 3. No when user navigates to No option', () => {
+    const buf = new RingBuffer(100)
+    simulateDataArrival(buf, '   1. Yes\r\n   2. Yes, and don\'t ask again\r\n \x1b[1m❯\x1b[22m 3. No\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(true)
+  })
+
+  // False-positive regression tests — Claude Code uses ❯ heavily in its TUI
+  // chrome during normal active execution; these must NOT trigger approval.
+
+  it('does NOT flag bare ❯ on its own line (Claude input cursor during screen repaint)', () => {
+    const buf = new RingBuffer(100)
+    // Claude Code repaints the cursor on every output chunk when active
+    simulateDataArrival(buf, 'Running tests...\r\n❯\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(false)
+  })
+
+  it('does NOT flag ❯ used as a step/tool indicator in Claude output', () => {
+    const buf = new RingBuffer(100)
+    // Claude Code uses ❯ as a visual bullet for tool steps
+    simulateDataArrival(buf, '❯ Reading src/index.ts\r\n')
+    simulateDataArrival(buf, '❯ Running: npm test\r\n')
+    simulateDataArrival(buf, '❯ Writing src/utils.ts\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(false)
+  })
+
+  it('does NOT flag ❯ at end of tool-result lines (TUI border/chrome)', () => {
+    const buf = new RingBuffer(100)
+    // Claude Code renders tool result boxes with ❯ in the border chrome
+    simulateDataArrival(buf, '\x1b[2K◆ Bash (read)                          ❯\r\n')
+    simulateDataArrival(buf, '\x1b[2K  $ ls -la\r\n')
+
+    const result = detector.analyze(buf)
+    expect(result.approval).toBe(false)
   })
 })
 

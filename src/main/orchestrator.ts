@@ -60,6 +60,7 @@ export class Orchestrator {
   private earlyOutput = new Map<string, string[]>() // keyed by tabId
   private rendererReady = new Set<string>() // tabIds whose renderer has connected
   private detector = new ApprovalDetector()
+  private needsCleanOutput = new Set<string>() // sessionIds waiting for first clean post-accept chunk
   private checkInterval: NodeJS.Timeout | null = null
   private statePath: string = ''
 
@@ -93,12 +94,15 @@ export class Orchestrator {
       // which would keep the detector firing even after acceptance.
       for (const session of this.sessions.values()) {
         const tab = session.tabs.find(t => t.id === tabId)
-        if (tab?.type === 'agent' && session.state === 'blocked' && session.blockedReason === 'approval') {
-          session.state = 'working'
-          session.blockedReason = undefined
-          for (const t of session.tabs) this.buffers.get(t.id)?.clear()
-          this.save()
-          this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+        if (tab?.type === 'agent') {
+          if (session.state === 'blocked' && session.blockedReason === 'approval') {
+            session.state = 'working'
+            session.blockedReason = undefined
+            for (const t of session.tabs) this.buffers.get(t.id)?.clear()
+            this.needsCleanOutput.add(session.id)
+            this.save()
+            this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+          }
           break
         }
       }
@@ -263,10 +267,8 @@ export class Orchestrator {
     if (session.state === 'blocked' && session.blockedReason === 'approval') {
       session.state = 'working'
       session.blockedReason = undefined
-      // Clear buffers so old approval text doesn't re-trigger
-      for (const tab of session.tabs) {
-        this.buffers.get(tab.id)?.clear()
-      }
+      for (const tab of session.tabs) this.buffers.get(tab.id)?.clear()
+      this.needsCleanOutput.add(session.id)
       this.save()
     }
     const target = tabId ?? session.activeTabId
@@ -450,37 +452,34 @@ export class Orchestrator {
       const clean = data.replace(/\x1b\[[?!>]?[0-9;]*[a-zA-Z~]/g, '').replace(/\x1b[()][0-9A-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
       const lines = clean.split(/\r?\n|\r/).filter(l => l.trim().length > 0)
       if (lines.length === 0) return // No substantive content
-      // For approval-blocked sessions, discard stale approval lines before evaluating
-      // fresh output — otherwise the old prompt text keeps the detector returning true.
+      // Clear buffer for approval-blocked sessions before evaluating fresh output.
+      // Also re-clear on every chunk while needsCleanOutput is set, so TUI repaint
+      // lines never survive into a subsequent checkHealth call.
       for (const session of this.sessions.values()) {
         const tab = session.tabs.find(t => t.id === tabId)
-        if (tab?.type === 'agent' && session.state === 'blocked' && session.blockedReason === 'approval') {
-          buffer.clear()
+        if (tab?.type === 'agent') {
+          if (session.state === 'blocked' && session.blockedReason === 'approval') {
+            buffer.clear()
+          } else if (session.state === 'working' && this.needsCleanOutput.has(session.id)) {
+            buffer.clear()
+          }
           break
         }
       }
       for (const line of lines) buffer.push(line)
 
-      // If session is blocked, check if this new output means the user responded
-      for (const session of this.sessions.values()) {
-        const tab = session.tabs.find(t => t.id === tabId)
-        if (tab?.type === 'agent' && session.state === 'blocked') {
-          // Only resume if new output does NOT contain an approval prompt
-          const result = this.detector.analyze(buffer)
-          if (!result.approval) {
-            session.state = 'working'
-            session.blockedReason = undefined
-            buffer.clear()
-            this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
-          }
-          break
-        }
-      }
-
       // Check for approval prompt immediately on new data
       for (const session of this.sessions.values()) {
         const tab = session.tabs.find(t => t.id === tabId)
         if (tab && session.state === 'working') {
+          if (this.needsCleanOutput.has(session.id)) {
+            // While waiting for first clean post-acceptance chunk, don't block.
+            // Clear the flag once the output is genuinely clean.
+            if (!this.detector.analyze(buffer).approval) {
+              this.needsCleanOutput.delete(session.id)
+            }
+            break
+          }
           const result = this.detector.analyze(buffer)
           if (result.approval) {
             session.state = 'blocked'
@@ -488,6 +487,10 @@ export class Orchestrator {
             this.save()
             const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
             summarizeBlocked(session.name, lastLines).then(summary => {
+              // Guard: user may have accepted while summarization was in flight.
+              // Sending session:approval now would re-block the renderer even though
+              // the orchestrator already transitioned back to working.
+              if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
               this.notify({
                 type: 'session:approval',
                 sessionId: session.id,
@@ -545,6 +548,7 @@ export class Orchestrator {
       }
 
       if (session.state === 'working') {
+        if (this.needsCleanOutput.has(session.id)) continue
         for (const tab of session.tabs) {
           const buffer = this.buffers.get(tab.id)
           if (buffer) {
@@ -555,6 +559,7 @@ export class Orchestrator {
               this.save()
               const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
               summarizeBlocked(session.name, lastLines).then(summary => {
+                if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
                 this.notify({
                   type: 'session:approval',
                   sessionId: session.id,

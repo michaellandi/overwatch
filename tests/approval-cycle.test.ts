@@ -4,18 +4,36 @@ import { readFileSync } from 'fs'
 describe('Approval notification cycle prevention', () => {
   const source = readFileSync('./src/main/orchestrator.ts', 'utf-8')
 
-  describe('onTabActivity resumes blocked sessions only when approval clears', () => {
-    it('re-checks detector before resuming a blocked session', () => {
-      // When blocked, new output triggers a re-check of the detector
-      // Only resumes if the approval prompt is no longer in the buffer
-      expect(source).toContain("session.state === 'blocked'")
-      expect(source).toContain("!result.approval")
+  describe('onTabActivity does NOT auto-resume blocked sessions on data', () => {
+    it('terminal:write is the sole unblock path in onTabActivity', () => {
+      // Path 2 (auto-resume on clean output) was removed because spinner output
+      // after Path 1a buffer-clear would falsely resume the session while the
+      // approval dialog was still visible.  Only terminal:write / tellSession resume.
+      const methodStart = source.indexOf('private onTabActivity(')
+      const methodBlock = source.slice(methodStart, methodStart + 2000)
+      // The method should not contain "session:resumed" (that belongs in terminal:write)
+      expect(methodBlock).not.toContain("'session:resumed'")
     })
 
     it('skips data with no substantive content', () => {
       const methodStart = source.indexOf('private onTabActivity(')
       const methodBlock = source.slice(methodStart, methodStart + 1000)
       expect(methodBlock).toContain('if (lines.length === 0) return')
+    })
+  })
+
+  describe('terminal:write is the primary unblock path for approval', () => {
+    it('terminal:write checks for approval block before resuming', () => {
+      const writeStart = source.indexOf("ipcMain.on('terminal:write'")
+      const writeBlock = source.slice(writeStart, writeStart + 1200)
+      expect(writeBlock).toContain("blockedReason === 'approval'")
+      expect(writeBlock).toContain("session.state = 'working'")
+    })
+
+    it('terminal:write sets needsCleanOutput to suppress TUI repaint detection', () => {
+      const writeStart = source.indexOf("ipcMain.on('terminal:write'")
+      const writeBlock = source.slice(writeStart, writeStart + 1200)
+      expect(writeBlock).toContain('needsCleanOutput')
     })
   })
 

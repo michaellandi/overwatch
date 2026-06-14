@@ -100,13 +100,13 @@ describe('ApprovalDetector', () => {
   })
 
   describe('detects Claude Code approval prompts', () => {
-    it('❯ prompt', () => {
+    it('❯ alone does NOT trigger (Claude TUI chrome / cursor — too many false positives)', () => {
       const detector = new ApprovalDetector()
       const buf = new RingBuffer(100)
       buf.push('Done with the refactoring.')
       buf.push('❯')
       const result = detector.analyze(buf)
-      expect(result.approval).toBe(true)
+      expect(result.approval).toBe(false)
     })
 
     it('> prompt (not detected alone — too many false positives)', () => {
