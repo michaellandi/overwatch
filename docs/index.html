@@ -4,12 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Overwatch — Orchestrate Parallel AI Agents</title>
-  <meta name="description" content="A centralized orchestration and notification center for parallel AI coding agents. Monitor, intervene, and coordinate Kiro, Claude, and any CLI agent from a single pane of glass.">
+  <meta name="description" content="Run N AI agents. Watch 1 window. Overwatch detects when any session gets blocked, summarizes why, and lets you respond — without switching between terminals.">
   <meta property="og:title" content="Overwatch — Orchestrate Parallel AI Agents">
-  <meta property="og:description" content="A centralized orchestration and notification center for parallel AI coding agents.">
-  <meta property="og:image" content="https://raw.githubusercontent.com/miclanm/overwatch/main/resources/logo.png">
+  <meta property="og:description" content="Run N AI agents. Watch 1 window. Overwatch detects when any session gets blocked, summarizes why, and lets you respond without switching terminals.">
+  <meta property="og:image" content="https://raw.githubusercontent.com/michaellandi/overwatch/mainline/docs/screenshot.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/michaellandi/overwatch/mainline/docs/screenshot.png">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -61,6 +62,79 @@
       color: var(--dim);
       max-width: 600px;
       margin: 0 auto;
+    }
+    .hero-screenshot {
+      max-width: 960px;
+      margin: 48px auto 0;
+      padding: 0 24px;
+    }
+    .hero-screenshot img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    }
+    .how-it-works {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 80px 24px 40px;
+      text-align: center;
+    }
+    .how-it-works h2 {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+    .how-it-works .subtitle {
+      color: var(--dim);
+      font-size: 16px;
+      margin-bottom: 48px;
+    }
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      position: relative;
+    }
+    @media (max-width: 700px) {
+      .steps { grid-template-columns: repeat(2, 1fr); gap: 24px; }
+    }
+    .step {
+      padding: 0 24px;
+      position: relative;
+    }
+    .step + .step::before {
+      content: '→';
+      position: absolute;
+      left: -8px;
+      top: 28px;
+      color: var(--dim);
+      font-size: 20px;
+    }
+    @media (max-width: 600px) {
+      .step + .step::before { display: none; }
+    }
+    .step-num {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 auto 16px;
+      color: var(--accent);
+    }
+    .step h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+    .step p {
+      font-size: 13px;
+      color: var(--dim);
+      line-height: 1.5;
     }
     .badges {
       display: flex;
@@ -244,11 +318,42 @@
     <img src="../resources/logo.png" alt="Overwatch">
     <h1>OVERWATCH</h1>
   </div>
-  <p class="tagline">A centralized orchestration and notification center for parallel AI coding agents.</p>
+  <p class="tagline">Run N agents. Watch 1 window.<br>Overwatch detects when any session gets blocked, summarizes why, and lets you respond — without switching terminals.</p>
   <div class="badges">
     <a href="https://github.com/michaellandi/overwatch/actions/workflows/ci.yml"><img src="https://github.com/michaellandi/overwatch/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="https://github.com/michaellandi/overwatch/releases/latest"><img src="https://img.shields.io/github/v/release/michaellandi/overwatch?include_prereleases" alt="Release"></a>
     <a href="https://github.com/michaellandi/overwatch/blob/mainline/LICENSE"><img src="https://img.shields.io/github/license/michaellandi/overwatch" alt="License"></a>
+  </div>
+</div>
+
+<div class="hero-screenshot">
+  <img src="screenshot.png" alt="Overwatch showing 5 parallel agent sessions with approval notifications and live terminal output" />
+</div>
+
+<div class="how-it-works">
+  <h2>How It Works</h2>
+  <p class="subtitle">AI agents block constantly. Overwatch makes sure you never miss it.</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <h3>Create Sessions</h3>
+      <p>Launch Claude, Kiro, or any CLI agent in a named session with a goal and working directory.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <h3>Agents Work</h3>
+      <p>Sessions run in parallel PTYs. Overwatch monitors output and detects blocked states automatically.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <h3>Get Notified</h3>
+      <p>When an agent gets stuck, Bedrock Claude summarizes what it needs — one line, no terminal diving.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <h3>Respond Once</h3>
+      <p>Approve, redirect, or delegate to the Overwatch orchestrator. All from a single pane.</p>
+    </div>
   </div>
 </div>
 
@@ -271,7 +376,7 @@
   <div class="feature">
     <div class="icon">🔌</div>
     <h3>MCP Server</h3>
-    <p>Exposes session management via Model Context Protocol. Plug into OpenClaw, your own orchestrators, or any MCP-compatible agent.</p>
+    <p>Exposes session management via Model Context Protocol on <code>localhost:3777</code>. Plug in Claude Code, your own orchestrators, or any MCP-compatible agent.</p>
   </div>
   <div class="feature">
     <div class="icon">🔍</div>
@@ -338,7 +443,7 @@
   <h2>Agents That Control You</h2>
   <p class="subtitle">External orchestrators can manage Overwatch sessions via the MCP server on <code>localhost:3777</code>.</p>
   <div class="integrations">
-    <div class="integration"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M2 12h20"/></svg> OpenClaw</div>
+    <div class="integration"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M2 12h20"/></svg> Claude Code</div>
     <div class="integration"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg> Any MCP Client</div>
     <div class="integration"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Custom Orchestrators</div>
   </div>

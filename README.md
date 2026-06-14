@@ -16,7 +16,17 @@
 
 ---
 
-Run multiple coding agents (Kiro, Claude, or any CLI tool) side-by-side with a persistent supervisor that monitors progress, detects when sessions are blocked, and lets you intervene without context-switching.
+AI agents block constantly — on approval prompts, file writes, and unclear instructions. Overwatch watches all your sessions in parallel and surfaces exactly what needs your attention, with an AI summary of why — so you can keep N agents running without watching N terminals.
+
+<p align="center">
+  <img src="docs/screenshot.png" width="860" alt="Overwatch — multiple sessions with agent output and approval notifications" />
+</p>
+
+## How It Works
+
+1. **Create sessions** — each runs a coding agent (Claude, Kiro, or any CLI) in its own PTY
+2. **Agents work autonomously** — when one gets blocked, Overwatch detects it and summarizes why using Claude on Bedrock
+3. **You respond once** — approve, redirect, or ask the Overwatch orchestrator to handle it across all sessions
 
 ## Features
 
