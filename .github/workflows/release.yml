@@ -33,8 +33,16 @@ jobs:
       - name: Check Apple API Key format
         if: matrix.os == 'macos-latest'
         run: |
+          echo "Key file first 30 chars:"
           head -c 30 /tmp/apple_api_key.p8
           echo ""
+          echo "KEY_ID length: ${#APPLE_API_KEY_ID}"
+          echo "ISSUER length: ${#APPLE_API_ISSUER}"
+          echo "notarytool version:"
+          xcrun notarytool --version
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
       - name: Build and Package
         timeout-minutes: 15
