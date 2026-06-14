@@ -47,10 +47,18 @@ jobs:
       - name: Test notarytool credentials
         if: matrix.os == 'macos-latest'
         run: |
-          timeout 30 xcrun notarytool history \
+          xcrun notarytool history \
             --key /tmp/apple_api_key.p8 \
             --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" 2>&1 || true
+            --issuer "$APPLE_API_ISSUER" 2>&1 &
+          NOTARY_PID=$!
+          sleep 30
+          if kill -0 $NOTARY_PID 2>/dev/null; then
+            echo "notarytool timed out after 30s - likely a network issue"
+            kill $NOTARY_PID
+          else
+            wait $NOTARY_PID || true
+          fi
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
