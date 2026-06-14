@@ -152,24 +152,30 @@ describe('ApprovalDetector', () => {
     })
   })
 
+  describe('does NOT false-positive on Kiro thinking/processing output', () => {
+    it('You: in conversation history while Kiro is thinking', () => {
+      // Kiro displays "You:" when rendering conversation context during processing —
+      // this must not be mistaken for an approval prompt.
+      const detector = new ApprovalDetector()
+      const buf = new RingBuffer(100)
+      buf.push('You: fix the login bug')
+      buf.push('Kiro: Thinking...')
+      const result = detector.analyze(buf)
+      expect(result.approval).toBe(false)
+    })
+
+    it('⏎ symbol in Kiro UI chrome while processing', () => {
+      // Kiro shows ⏎ as a general keyboard hint in its UI, not only on approval screens.
+      const detector = new ApprovalDetector()
+      const buf = new RingBuffer(100)
+      buf.push('Analyzing codebase...')
+      buf.push('  ⏎  to submit')
+      const result = detector.analyze(buf)
+      expect(result.approval).toBe(false)
+    })
+  })
+
   describe('detects Kiro approval prompts', () => {
-    it('You: prompt', () => {
-      const detector = new ApprovalDetector()
-      const buf = new RingBuffer(100)
-      buf.push('I finished the refactoring.')
-      buf.push('You:')
-      const result = detector.analyze(buf)
-      expect(result.approval).toBe(true)
-    })
-
-    it('⏎ prompt', () => {
-      const detector = new ApprovalDetector()
-      const buf = new RingBuffer(100)
-      buf.push('  ⏎')
-      const result = detector.analyze(buf)
-      expect(result.approval).toBe(true)
-    })
-
     it('requires approval', () => {
       const detector = new ApprovalDetector()
       const buf = new RingBuffer(100)

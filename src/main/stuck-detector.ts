@@ -51,9 +51,8 @@ const APPROVAL_PATTERNS: RegExp[] = [
   /Esc to cancel/i,
   // ❯ cursor on a known permission dialog option, with optional numbering (e.g. "❯ 1. Yes")
   /❯\s+(\d+\.\s+)?(yes|no|trust|allow|deny|approve|reject)/i,
-  // Kiro prompts
-  /You:\s*$/,
-  /⏎/,
+  // Kiro prompts — only patterns that appear exclusively on the approval screen,
+  // not in normal thinking/processing output or conversation history display.
   /requires approval/i,
   /❯\s*(?:\d+\.\s*)?(Yes|No|Trust)/,
   /Tab to edit/,
