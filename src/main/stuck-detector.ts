@@ -45,6 +45,12 @@ const APPROVAL_PATTERNS: RegExp[] = [
   /\[y\/N\]/i,
   /Press enter to continue/i,
   /Do you want to/i,
+  /allow once/i,
+  /trust all tools/i,
+  // Claude Code permission dialog footer (always present)
+  /Esc to cancel/i,
+  // ❯ cursor on a known permission dialog option, with optional numbering (e.g. "❯ 1. Yes")
+  /❯\s+(\d+\.\s+)?(yes|no|trust|allow|deny|approve|reject)/i,
   // Kiro prompts
   /You:\s*$/,
   /⏎/,
