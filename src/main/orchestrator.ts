@@ -26,7 +26,8 @@ async function summarizeBlocked(sessionName: string, lastLines: string[]): Promi
     return text?.trim() ?? 'waiting for input'
   } catch (err) {
     console.log('[summarize] error:', err)
-    return 'waiting for input'
+    const errMsg = (err as Error).message ?? String(err)
+    return `waiting for input — ⚠️ **Bedrock unavailable**: ${errMsg.slice(0, 120)}`
   }
 }
 

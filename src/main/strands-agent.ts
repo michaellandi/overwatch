@@ -337,7 +337,11 @@ export class OverwatchAgent {
       win?.webContents.send('overwatch:chat-done')
       return fullText || 'Done.'
     } catch (err) {
-      const msg = `Error: ${(err as Error).message}`
+      const errMsg = (err as Error).message ?? String(err)
+      const isBedrockAuth = /AccessDenied|UnrecognizedClient|InvalidClientToken|ExpiredToken|NoCredential|could not be found|not authorized/i.test(errMsg)
+      const msg = isBedrockAuth
+        ? `⚠️ **Bedrock access failed** — check your AWS credentials and region in Settings.\n\n\`${errMsg}\``
+        : `⚠️ **Agent error** — ${errMsg}`
       console.error('[overwatch] Agent error:', err)
       win?.webContents.send('overwatch:chat-stream', msg)
       win?.webContents.send('overwatch:chat-done')
