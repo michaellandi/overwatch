@@ -28,3 +28,4 @@ Thumbs.db
 *.dmg
 *.zip
 *.AppImage
+.claude/settings.local.json
