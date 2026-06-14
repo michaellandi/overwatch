@@ -30,6 +30,12 @@ jobs:
         env:
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
 
+      - name: Check Apple API Key format
+        if: matrix.os == 'macos-latest'
+        run: |
+          head -c 30 /tmp/apple_api_key.p8
+          echo ""
+
       - name: Build and Package
         timeout-minutes: 15
         run: npx electron-vite build && npx electron-builder --publish never
