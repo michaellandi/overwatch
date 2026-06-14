@@ -44,6 +44,17 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
+      - name: Test notarytool credentials
+        if: matrix.os == 'macos-latest'
+        run: |
+          timeout 30 xcrun notarytool history \
+            --key /tmp/apple_api_key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" 2>&1 || true
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
       - name: Build and Package
         timeout-minutes: 15
         run: npx electron-vite build && npx electron-builder --publish never
