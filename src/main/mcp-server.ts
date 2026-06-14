@@ -1,13 +1,14 @@
 import { createServer } from 'http'
+import type { Server } from 'http'
 import crypto from 'crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import type { Orchestrator } from './orchestrator'
 
-const MCP_PORT = 3777
+export const MCP_PORT = 3777
 
-export function startMcpServer(orchestrator: Orchestrator): void {
+export async function startMcpServer(orchestrator: Orchestrator, port = MCP_PORT): Promise<{ close: () => Promise<void> }> {
   const server = new McpServer({
     name: 'overwatch',
     version: '0.1.0'
@@ -78,8 +79,8 @@ export function startMcpServer(orchestrator: Orchestrator): void {
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() })
 
-  const httpServer = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://localhost:${MCP_PORT}`)
+  const httpServer: Server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${port}`)
     if (url.pathname === '/mcp') {
       await transport.handleRequest(req, res)
     } else {
@@ -88,9 +89,21 @@ export function startMcpServer(orchestrator: Orchestrator): void {
     }
   })
 
-  server.connect(transport)
+  await server.connect(transport)
 
-  httpServer.listen(MCP_PORT, '127.0.0.1', () => {
-    console.log(`[overwatch] MCP server listening on http://127.0.0.1:${MCP_PORT}/mcp`)
+  await new Promise<void>((resolve, reject) => {
+    httpServer.listen(port, '127.0.0.1', resolve)
+    httpServer.once('error', reject)
   })
+
+  console.log(`[overwatch] MCP server listening on http://127.0.0.1:${port}/mcp`)
+
+  return {
+    close: async () => {
+      await server.close()
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close(err => err ? reject(err) : resolve())
+      })
+    }
+  }
 }
