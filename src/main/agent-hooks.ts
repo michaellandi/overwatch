@@ -5,7 +5,8 @@ import { join } from 'path'
 // remove our own entries without touching user-configured hooks.
 const MARKER = 'OVERWATCH_HOOK_PORT'
 
-function makeHookCommand(eventType: string): string {
+// Claude hooks: reads event JSON from stdin (piped by Claude) and POSTs it.
+function makeClaudeHookCommand(eventType: string): string {
   return (
     'curl -sf -X POST ' +
     '-H "Content-Type: application/json" ' +
@@ -15,6 +16,22 @@ function makeHookCommand(eventType: string): string {
     `-H "X-Overwatch-Event-Type: ${eventType}" ` +
     '-d @- ' +
     `"http://127.0.0.1:$${MARKER}/hook" || true`
+  )
+}
+
+// Kiro hooks: Kiro captures hook stdout and injects it as AI context, so we
+// suppress output with -o /dev/null and use -d '{}' instead of reading stdin
+// (Kiro does not pipe event data to the hook's stdin).
+function makeKiroHookCommand(eventType: string): string {
+  return (
+    'curl -sf -X POST ' +
+    '-H "Content-Type: application/json" ' +
+    '-H "X-Overwatch-Token: $OVERWATCH_HOOK_TOKEN" ' +
+    '-H "X-Overwatch-Session-Id: $OVERWATCH_SESSION_ID" ' +
+    '-H "X-Overwatch-Tab-Id: $OVERWATCH_TAB_ID" ' +
+    `-H "X-Overwatch-Event-Type: ${eventType}" ` +
+    "-d '{}' " +
+    `-o /dev/null "http://127.0.0.1:$${MARKER}/hook" || true`
   )
 }
 
@@ -52,7 +69,7 @@ export function writeClaudeHooks(cwd: string): void {
   for (const { hookKey, eventType } of CLAUDE_SPECS) {
     const existing = Array.isArray(hooks[hookKey]) ? (hooks[hookKey] as unknown[]) : []
     const kept = existing.filter(e => !isOurs(e))
-    hooks[hookKey] = [...kept, { hooks: [{ type: 'command', command: makeHookCommand(eventType) }] }]
+    hooks[hookKey] = [...kept, { hooks: [{ type: 'command', command: makeClaudeHookCommand(eventType) }] }]
   }
   config.hooks = hooks
 
@@ -101,7 +118,7 @@ export function writeKiroHooks(cwd: string): void {
   for (const { hookKey, eventType } of KIRO_SPECS) {
     const existing = Array.isArray(hooks[hookKey]) ? (hooks[hookKey] as unknown[]) : []
     const kept = existing.filter(e => !isOurs(e))
-    hooks[hookKey] = [...kept, { command: makeHookCommand(eventType) }]
+    hooks[hookKey] = [...kept, { command: makeKiroHookCommand(eventType) }]
   }
 
   config.name = 'overwatch'

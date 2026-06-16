@@ -470,6 +470,10 @@ export class Orchestrator {
           hookEnv.OVERWATCH_HOOK_TOKEN = this.hookServer.getToken()
           hookEnv.OVERWATCH_SESSION_ID = sessionId
           hookEnv.OVERWATCH_TAB_ID     = tabId
+          // Kiro only applies hooks when launched with --agent overwatch; inject if absent.
+          if (!args.includes('overwatch')) {
+            args.push('--agent', 'overwatch')
+          }
         } catch (err) {
           console.warn(`[hooks] failed to write Kiro hooks for ${cwd}:`, err)
         }
