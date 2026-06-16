@@ -72,9 +72,9 @@ function createWindow(): void {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow()
-  orchestrator.start()
+  await orchestrator.start()
   startMcpServer(orchestrator).catch(err => console.error('[overwatch] MCP server failed to start:', err))
 
   // IPC handlers

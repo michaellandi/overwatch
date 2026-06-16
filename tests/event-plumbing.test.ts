@@ -48,9 +48,18 @@ describe('Event plumbing', () => {
     const source = readFileSync('./src/main/orchestrator.ts', 'utf-8')
 
     it('session:approval includes tabId', () => {
-      const approvalIdx = source.indexOf("type: 'session:approval'")
-      const block = source.slice(approvalIdx - 100, approvalIdx + 100)
-      expect(block).toContain('tabId: tab.id')
+      // There are multiple session:approval notify calls (hook handler + PTY paths).
+      // Verify at least one of them passes a tabId.
+      let idx = 0
+      let found = false
+      while (true) {
+        idx = source.indexOf("type: 'session:approval'", idx)
+        if (idx === -1) break
+        const block = source.slice(idx - 150, idx + 150)
+        if (block.includes('tabId:')) { found = true; break }
+        idx++
+      }
+      expect(found).toBe(true)
     })
 
     it('eventListener signature accepts sessionId and tabId', () => {

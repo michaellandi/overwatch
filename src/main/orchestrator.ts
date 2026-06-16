@@ -5,6 +5,16 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import type { Session, Tab } from '../shared/types'
 import { RingBuffer, ApprovalDetector } from './stuck-detector'
+import { HookServer } from './hook-server'
+import {
+  isClaudeCommand,
+  isKiroCommand,
+  writeClaudeHooks,
+  removeClaudeHooks,
+  writeKiroHooks,
+  removeKiroHooks,
+  isPermissionNotification,
+} from './agent-hooks'
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime'
 import { fromIni } from '@aws-sdk/credential-providers'
 
@@ -45,6 +55,12 @@ export class Orchestrator {
   private buffers = new Map<string, RingBuffer>() // keyed by tabId
   private scrollback = new Map<string, string[]>() // raw output chunks per tab
 
+  // Tabs where lifecycle events arrive via the hook server instead of PTY
+  // pattern matching. For these tabs, ApprovalDetector is not used.
+  private hookManagedTabs = new Set<string>()
+
+  private hookServer = new HookServer()
+
   setInactivityTimeout(minutes: number): void {
     HEARTBEAT_TIMEOUT_MS = minutes * 60 * 1000
   }
@@ -61,13 +77,16 @@ export class Orchestrator {
   private earlyOutput = new Map<string, string[]>() // keyed by tabId
   private rendererReady = new Set<string>() // tabIds whose renderer has connected
   private detector = new ApprovalDetector()
-  private needsCleanOutput = new Set<string>() // sessionIds waiting for first clean post-accept chunk
+  private needsCleanOutput = new Set<string>() // sessionIds waiting for first clean post-accept chunk (PTY-only)
   private checkInterval: NodeJS.Timeout | null = null
   private statePath: string = ''
 
-  start(): void {
+  async start(): Promise<void> {
     this.statePath = join(app.getPath('userData'), 'state.json')
     this.load()
+
+    await this.hookServer.start((event) => this.onHookEvent(event))
+
     // Skip restored sessions for 15s to avoid false positives during initialization
     const restoredIds = new Set([...this.sessions.keys()])
     setTimeout(() => restoredIds.clear(), 15_000)
@@ -91,8 +110,6 @@ export class Orchestrator {
 
     ipcMain.on('terminal:write', (_e, tabId: string, data: string) => {
       // User typing into an approval-blocked terminal means they accepted — unblock immediately.
-      // Don't wait for output analysis: the TUI redraws often echo the prompt text,
-      // which would keep the detector firing even after acceptance.
       for (const session of this.sessions.values()) {
         const tab = session.tabs.find(t => t.id === tabId)
         if (tab?.type === 'agent') {
@@ -100,7 +117,11 @@ export class Orchestrator {
             session.state = 'working'
             session.blockedReason = undefined
             for (const t of session.tabs) this.buffers.get(t.id)?.clear()
-            this.needsCleanOutput.add(session.id)
+            // For PTY-detected tabs only: set flag to suppress TUI repaint re-detection.
+            // Hook-managed tabs don't do PTY scanning so the flag is not needed.
+            if (!this.hookManagedTabs.has(tabId)) {
+              this.needsCleanOutput.add(session.id)
+            }
             this.save()
             this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
           }
@@ -133,6 +154,8 @@ export class Orchestrator {
     if (this.checkInterval) clearInterval(this.checkInterval)
     for (const [tabId] of this.ptys) this.saveScrollback(tabId)
     for (const pty of this.ptys.values()) pty.kill()
+    this.cleanAllHooks()
+    this.hookServer.stop()
     this.save()
   }
 
@@ -207,12 +230,7 @@ export class Orchestrator {
     const session = this.findSession(sessionId)
     if (!session) return
 
-    const pty = this.ptys.get(tabId)
-    if (pty) { pty.kill(); this.ptys.delete(tabId) }
-    this.buffers.delete(tabId)
-    this.earlyOutput.delete(tabId)
-    this.rendererReady.delete(tabId)
-
+    this.teardownTab(tabId, session.workingDir)
     session.tabs = session.tabs.filter(t => t.id !== tabId)
     if (session.activeTabId === tabId) {
       session.activeTabId = session.tabs[0]?.id ?? ''
@@ -227,11 +245,7 @@ export class Orchestrator {
     const session = this.findSession(sessionId)
     if (session) {
       for (const tab of session.tabs) {
-        const pty = this.ptys.get(tab.id)
-        if (pty) { pty.kill(); this.ptys.delete(tab.id) }
-        this.buffers.delete(tab.id)
-        this.earlyOutput.delete(tab.id)
-        this.rendererReady.delete(tab.id)
+        this.teardownTab(tab.id, session.workingDir)
       }
     }
     const name = session?.name ?? sessionId.slice(0, 8)
@@ -269,7 +283,9 @@ export class Orchestrator {
       session.state = 'working'
       session.blockedReason = undefined
       for (const tab of session.tabs) this.buffers.get(tab.id)?.clear()
-      this.needsCleanOutput.add(session.id)
+      if (!tabId || !this.hookManagedTabs.has(tabId)) {
+        this.needsCleanOutput.add(session.id)
+      }
       this.save()
     }
     const target = tabId ?? session.activeTabId
@@ -346,33 +362,120 @@ export class Orchestrator {
     return `I have ${sessions.length} sessions. Ask me about their status, what's blocked, or peek at a specific session.`
   }
 
+  // ── Hook event handling ────────────────────────────────────────────────────
+
+  private onHookEvent(event: { sessionId: string; tabId: string; eventType: string; body: Record<string, unknown> }): void {
+    const session = this.sessions.get(event.sessionId)
+    if (!session) return
+
+    session.lastActivityAt = Date.now()
+
+    if (event.eventType === 'start') {
+      if (session.state === 'blocked' && session.blockedReason === 'approval') {
+        for (const tab of session.tabs) this.buffers.get(tab.id)?.clear()
+        this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
+      }
+      session.state = 'working'
+      session.blockedReason = undefined
+      this.save()
+      return
+    }
+
+    if (event.eventType === 'stop') {
+      // Claude finished its turn — session stays alive and working (waiting for next prompt).
+      // Reset activity timestamp so the idle timer doesn't fire immediately.
+      if (session.state === 'working') {
+        this.save()
+      }
+      return
+    }
+
+    if (event.eventType === 'notification') {
+      if (isPermissionNotification(event.body) && session.state !== 'blocked') {
+        session.state = 'blocked'
+        session.blockedReason = 'approval'
+        this.save()
+        const buffer = this.buffers.get(event.tabId)
+        const lastLines = buffer
+          ? buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
+          : []
+        const message = typeof event.body.message === 'string' ? event.body.message : ''
+        const summaryHint = message || lastLines.slice(-5).join(' ')
+        summarizeBlocked(session.name, summaryHint ? [summaryHint] : lastLines).then(summary => {
+          if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
+          this.notify({
+            type: 'session:approval',
+            sessionId: session.id,
+            tabId: event.tabId,
+            summary: `⚡ **${session.name}** — ${summary}`
+          })
+        })
+      }
+      return
+    }
+  }
+
+  // ── PTY lifecycle ─────────────────────────────────────────────────────────
+
   private spawnTab(tabId: string): void {
     let cwd = process.env.HOME ?? '/'
     let command = process.env.SHELL ?? '/bin/zsh'
     let args: string[] = []
+    let sessionId = ''
 
     for (const session of this.sessions.values()) {
       const tab = session.tabs.find(t => t.id === tabId)
       if (tab) {
         cwd = session.workingDir
+        sessionId = session.id
         const parts = tab.command.split(/\s+/)
         command = parts[0]
         args = parts.slice(1)
 
         // If agent has been run before in this dir, add resume flag
         if (tab.type === 'agent' && tab.sessionRef) {
-          if (tab.command.startsWith('kiro')) {
+          if (isKiroCommand(tab.command)) {
             args.push('--resume')
-          } else if (tab.command.startsWith('claude')) {
+          } else if (isClaudeCommand(tab.command)) {
             args = args.filter(a => a !== '-c' && a !== '--continue')
             args.push('--continue')
           }
         }
         // For claude, always set a name based on tab ID for discoverability
-        if (tab.type === 'agent' && tab.command.startsWith('claude') && !tab.sessionRef) {
+        if (tab.type === 'agent' && isClaudeCommand(tab.command) && !tab.sessionRef) {
           args.push('-n', `overwatch-${tabId.slice(0, 8)}`)
         }
         break
+      }
+    }
+
+    // Write hook config for supported agents
+    const hookEnv: Record<string, string> = {}
+    if (this.hookServer.getPort() > 0) {
+      if (isClaudeCommand(command)) {
+        try {
+          writeClaudeHooks(cwd)
+          this.hookManagedTabs.add(tabId)
+          hookEnv.OVERWATCH_HOOK_PORT  = String(this.hookServer.getPort())
+          hookEnv.OVERWATCH_HOOK_TOKEN = this.hookServer.getToken()
+          hookEnv.OVERWATCH_SESSION_ID = sessionId
+          hookEnv.OVERWATCH_TAB_ID     = tabId
+        } catch (err) {
+          console.warn(`[hooks] failed to write Claude hooks for ${cwd}:`, err)
+        }
+      } else if (isKiroCommand(command)) {
+        // Write hooks and pass env vars so start/stop events work if Kiro picks them up.
+        // We do NOT add Kiro tabs to hookManagedTabs because Kiro has no "notification"
+        // hook for approval prompts — PTY-based ApprovalDetector stays active for Kiro.
+        try {
+          writeKiroHooks(cwd)
+          hookEnv.OVERWATCH_HOOK_PORT  = String(this.hookServer.getPort())
+          hookEnv.OVERWATCH_HOOK_TOKEN = this.hookServer.getToken()
+          hookEnv.OVERWATCH_SESSION_ID = sessionId
+          hookEnv.OVERWATCH_TAB_ID     = tabId
+        } catch (err) {
+          console.warn(`[hooks] failed to write Kiro hooks for ${cwd}:`, err)
+        }
       }
     }
 
@@ -381,7 +484,7 @@ export class Orchestrator {
       cols: 120,
       rows: 30,
       cwd,
-      env: { ...process.env, SHELL: process.env.SHELL ?? '/bin/zsh' }
+      env: { ...process.env, SHELL: process.env.SHELL ?? '/bin/zsh', ...hookEnv }
     })
 
     // Capture kiro session ID from output
@@ -418,6 +521,7 @@ export class Orchestrator {
       console.log(`[pty] tab ${tabId} exited with code ${exitCode}`)
       this.saveScrollback(tabId)
       this.ptys.delete(tabId)
+      this.hookManagedTabs.delete(tabId)
       // Check if session has any remaining live PTYs
       for (const session of this.sessions.values()) {
         if (session.tabs.some(t => t.id === tabId)) {
@@ -432,6 +536,28 @@ export class Orchestrator {
     })
 
     this.ptys.set(tabId, pty)
+  }
+
+  private teardownTab(tabId: string, cwd: string): void {
+    const pty = this.ptys.get(tabId)
+    if (pty) { pty.kill(); this.ptys.delete(tabId) }
+    this.hookManagedTabs.delete(tabId)
+    this.buffers.delete(tabId)
+    this.earlyOutput.delete(tabId)
+    this.rendererReady.delete(tabId)
+    // Best-effort hook cleanup
+    try { removeClaudeHooks(cwd) } catch {}
+    try { removeKiroHooks(cwd) } catch {}
+  }
+
+  private cleanAllHooks(): void {
+    const seen = new Set<string>()
+    for (const session of this.sessions.values()) {
+      if (seen.has(session.workingDir)) continue
+      seen.add(session.workingDir)
+      try { removeClaudeHooks(session.workingDir) } catch {}
+      try { removeKiroHooks(session.workingDir) } catch {}
+    }
   }
 
   private onTabActivity(tabId: string, data: string): void {
@@ -453,14 +579,15 @@ export class Orchestrator {
       const clean = data.replace(/\x1b\[[?!>]?[0-9;]*[a-zA-Z~]/g, '').replace(/\x1b[()][0-9A-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
       const lines = clean.split(/\r?\n|\r/).filter(l => l.trim().length > 0)
       if (lines.length === 0) return // No substantive content
-      // Clear buffer for approval-blocked sessions before evaluating fresh output.
-      // Also re-clear on every chunk while needsCleanOutput is set, so TUI repaint
-      // lines never survive into a subsequent checkHealth call.
+
       for (const session of this.sessions.values()) {
         const tab = session.tabs.find(t => t.id === tabId)
         if (tab?.type === 'agent') {
           if (session.state === 'blocked' && session.blockedReason === 'approval') {
-            buffer.clear()
+            // For PTY-detected sessions, clear the buffer so stale approval text
+            // doesn't keep firing the detector. Hook-managed sessions don't need this
+            // because the hook unblocks them, not PTY output.
+            if (!this.hookManagedTabs.has(tabId)) buffer.clear()
           } else if (session.state === 'working' && this.needsCleanOutput.has(session.id)) {
             buffer.clear()
           }
@@ -469,38 +596,35 @@ export class Orchestrator {
       }
       for (const line of lines) buffer.push(line)
 
-      // Check for approval prompt immediately on new data
-      for (const session of this.sessions.values()) {
-        const tab = session.tabs.find(t => t.id === tabId)
-        if (tab && session.state === 'working') {
-          if (this.needsCleanOutput.has(session.id)) {
-            // While waiting for first clean post-acceptance chunk, don't block.
-            // Clear the flag once the output is genuinely clean.
-            if (!this.detector.analyze(buffer).approval) {
-              this.needsCleanOutput.delete(session.id)
+      // PTY-based approval detection — skipped for hook-managed tabs
+      if (!this.hookManagedTabs.has(tabId)) {
+        for (const session of this.sessions.values()) {
+          const tab = session.tabs.find(t => t.id === tabId)
+          if (tab && session.state === 'working') {
+            if (this.needsCleanOutput.has(session.id)) {
+              if (!this.detector.analyze(buffer).approval) {
+                this.needsCleanOutput.delete(session.id)
+              }
+              break
+            }
+            const result = this.detector.analyze(buffer)
+            if (result.approval) {
+              session.state = 'blocked'
+              session.blockedReason = 'approval'
+              this.save()
+              const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
+              summarizeBlocked(session.name, lastLines).then(summary => {
+                if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
+                this.notify({
+                  type: 'session:approval',
+                  sessionId: session.id,
+                  tabId: tab.id,
+                  summary: `⚡ **${session.name}** [${tab.name}] — ${summary}`
+                })
+              })
             }
             break
           }
-          const result = this.detector.analyze(buffer)
-          if (result.approval) {
-            session.state = 'blocked'
-            session.blockedReason = 'approval'
-            this.save()
-            const lastLines = buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
-            summarizeBlocked(session.name, lastLines).then(summary => {
-              // Guard: user may have accepted while summarization was in flight.
-              // Sending session:approval now would re-block the renderer even though
-              // the orchestrator already transitioned back to working.
-              if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
-              this.notify({
-                type: 'session:approval',
-                sessionId: session.id,
-                tabId: tab.id,
-                summary: `⚡ **${session.name}** [${tab.name}] — ${summary}`
-              })
-            })
-          }
-          break
         }
       }
 
@@ -551,6 +675,8 @@ export class Orchestrator {
       if (session.state === 'working') {
         if (this.needsCleanOutput.has(session.id)) continue
         for (const tab of session.tabs) {
+          // Skip PTY-based approval detection for hook-managed tabs
+          if (this.hookManagedTabs.has(tab.id)) continue
           const buffer = this.buffers.get(tab.id)
           if (buffer) {
             const result = this.detector.analyze(buffer)

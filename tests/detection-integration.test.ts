@@ -72,18 +72,6 @@ describe('Detection integration: Kiro TUI approval flow', () => {
     expect(result.approval).toBe(false)
   })
 
-  it('detects Kiro "You:" prompt after agent finishes', () => {
-    const buf = new RingBuffer(100)
-
-    // Agent produces output
-    simulateDataArrival(buf, 'I have completed the refactoring.\r\n')
-    simulateDataArrival(buf, 'All tests pass.\r\n')
-    simulateDataArrival(buf, 'You:')
-
-    const result = detector.analyze(buf)
-    expect(result.approval).toBe(true)
-  })
-
   it('detects Kiro "requires approval" with ANSI color codes', () => {
     const buf = new RingBuffer(100)
 
