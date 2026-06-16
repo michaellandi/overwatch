@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'agents' | 'integrations' | 'mcp'
+type Tab = 'general' | 'behavior' | 'agents' | 'integrations' | 'mcp'
 
 const DEFAULT_AGENTS = [
   { id: 'kiro', label: 'Kiro', desc: 'kiro-cli chat' },
@@ -29,6 +29,8 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
   const [enabledAgents, setEnabledAgents] = useState<string[]>(['kiro', 'claude', 'terminal'])
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>(['vscode', 'terminal', 'finder', 'obsidian'])
   const [inactivityMinutes, setInactivityMinutes] = useState(5)
+  const [provider, setProvider] = useState<'bedrock' | 'anthropic'>('bedrock')
+  const [anthropicApiKey, setAnthropicApiKey] = useState('')
   const [awsProfile, setAwsProfile] = useState('default')
   const [awsRegion, setAwsRegion] = useState('us-west-2')
   const { themeId, setThemeId } = useTheme()
@@ -46,6 +48,8 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
         if (s.enabledIntegrations) setEnabledIntegrations(s.enabledIntegrations)
         if (s.mcpServers) setMcpServers(s.mcpServers)
         if (s.inactivityMinutes) setInactivityMinutes(s.inactivityMinutes)
+        if (s.provider) setProvider(s.provider)
+        if (s.anthropicApiKey) setAnthropicApiKey(s.anthropicApiKey)
         if (s.awsProfile) setAwsProfile(s.awsProfile)
         if (s.awsRegion) setAwsRegion(s.awsRegion)
       })
@@ -56,7 +60,7 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
 
   const save = async (): Promise<void> => {
     const current = await window.overwatch.settings.get()
-    await window.overwatch.settings.set({ ...current, contextDir, enabledAgents, enabledIntegrations, mcpServers, inactivityMinutes, awsProfile, awsRegion })
+    await window.overwatch.settings.set({ ...current, contextDir, enabledAgents, enabledIntegrations, mcpServers, inactivityMinutes, provider, anthropicApiKey, awsProfile, awsRegion })
     onClose()
   }
 
@@ -78,6 +82,7 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
       <div className="settings-panel" onClick={e => e.stopPropagation()}>
         <div className="settings-tabs">
           <button className={`settings-tab ${tab === 'general' ? 'active' : ''}`} onClick={() => setTab('general')}>General</button>
+          <button className={`settings-tab ${tab === 'behavior' ? 'active' : ''}`} onClick={() => setTab('behavior')}>Behavior</button>
           <button className={`settings-tab ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>Agents</button>
           <button className={`settings-tab ${tab === 'integrations' ? 'active' : ''}`} onClick={() => setTab('integrations')}>Open With</button>
           <button className={`settings-tab ${tab === 'mcp' ? 'active' : ''}`} onClick={() => setTab('mcp')}>MCP</button>
@@ -102,23 +107,49 @@ export function Settings({ open, onClose }: Props): React.ReactElement | null {
               </div>
             </div>
             <div className="settings-field">
+              <label>LLM Provider</label>
+              <div className="agent-picker">
+                {([['bedrock', 'AWS Bedrock'], ['anthropic', 'Anthropic']] as const).map(([id, label]) => (
+                  <button key={id} className={`agent-option ${provider === id ? 'active' : ''}`} onClick={() => setProvider(id)}>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {provider === 'anthropic' && (
+              <div className="settings-field">
+                <label>Anthropic API Key</label>
+                <input type="password" value={anthropicApiKey} onChange={e => setAnthropicApiKey(e.target.value)} placeholder="sk-ant-..." />
+              </div>
+            )}
+            {provider === 'bedrock' && (
+              <>
+                <div className="settings-field">
+                  <label>AWS Profile</label>
+                  <input type="text" value={awsProfile} onChange={e => setAwsProfile(e.target.value)} placeholder="default" />
+                </div>
+                <div className="settings-field">
+                  <label>AWS Region</label>
+                  <select value={awsRegion} onChange={e => setAwsRegion(e.target.value)}>
+                    <option value="us-east-1">us-east-1</option>
+                    <option value="us-west-2">us-west-2</option>
+                    <option value="eu-west-1">eu-west-1</option>
+                    <option value="eu-central-1">eu-central-1</option>
+                    <option value="ap-northeast-1">ap-northeast-1</option>
+                    <option value="ap-southeast-1">ap-southeast-1</option>
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'behavior' && (
+          <div className="settings-content">
+            <div className="settings-field">
               <label>Inactivity Timeout (minutes)</label>
+              <p className="settings-help">How long a session can be silent before it's marked idle.</p>
               <input type="number" min={1} max={60} value={inactivityMinutes} onChange={e => setInactivityMinutes(Number(e.target.value))} />
-            </div>
-            <div className="settings-field">
-              <label>AWS Profile</label>
-              <input type="text" value={awsProfile} onChange={e => setAwsProfile(e.target.value)} placeholder="default" />
-            </div>
-            <div className="settings-field">
-              <label>AWS Region</label>
-              <select value={awsRegion} onChange={e => setAwsRegion(e.target.value)}>
-                <option value="us-east-1">us-east-1</option>
-                <option value="us-west-2">us-west-2</option>
-                <option value="eu-west-1">eu-west-1</option>
-                <option value="eu-central-1">eu-central-1</option>
-                <option value="ap-northeast-1">ap-northeast-1</option>
-                <option value="ap-southeast-1">ap-southeast-1</option>
-              </select>
             </div>
             <div className="settings-field">
               <label className="toggle-row">

@@ -15,29 +15,26 @@ import {
   removeKiroHooks,
   isPermissionNotification,
 } from './agent-hooks'
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime'
-import { fromIni } from '@aws-sdk/credential-providers'
+import { getProvider } from './providers'
+import type { LLMProvider, ProviderSettings } from './providers'
 
-let summarizeClient: BedrockRuntimeClient = new BedrockRuntimeClient({ region: 'us-west-2' })
+let summarizeProvider: LLMProvider = getProvider({ provider: 'bedrock', awsRegion: 'us-west-2' })
 
-export function configureBedrock(region: string, profile?: string): void {
-  const p = profile ?? 'default'
-  summarizeClient = new BedrockRuntimeClient({ region, credentials: fromIni({ profile: p }) })
+export function configureProvider(settings: ProviderSettings): void {
+  summarizeProvider = getProvider(settings)
 }
 
 async function summarizeBlocked(sessionName: string, lastLines: string[]): Promise<string> {
   try {
-    const resp = await summarizeClient.send(new ConverseCommand({
-      modelId: 'us.anthropic.claude-sonnet-4-6',
-      messages: [{ role: 'user', content: [{ text: `Summarize what this AI coding agent is trying to do and what it needs approval for. Be specific about the tool/action needing approval and the goal. One short sentence, no markdown. Here's the recent output:\n${lastLines.join('\n')}` }] }],
-      inferenceConfig: { maxTokens: 150 }
-    }))
-    const text = (resp.output?.message?.content?.[0] as { text?: string })?.text
-    return text?.trim() ?? 'waiting for input'
+    return await summarizeProvider.complete({
+      system: 'You summarize AI coding agent output into one short sentence.',
+      prompt: `Summarize what this AI coding agent is trying to do and what it needs approval for. Be specific about the tool/action needing approval and the goal. One short sentence, no markdown. Here's the recent output:\n${lastLines.join('\n')}`,
+      maxTokens: 150
+    })
   } catch (err) {
     console.log('[summarize] error:', err)
     const errMsg = (err as Error).message ?? String(err)
-    return `waiting for input — ⚠️ **Bedrock unavailable**: ${errMsg.slice(0, 120)}`
+    return `waiting for input — ⚠️ **Provider unavailable**: ${errMsg.slice(0, 120)}`
   }
 }
 

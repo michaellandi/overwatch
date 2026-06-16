@@ -1,5 +1,3 @@
-import { BedrockRuntimeClient, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime'
-import { fromIni } from '@aws-sdk/credential-providers'
 import { BrowserWindow } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -8,8 +6,8 @@ import type { Orchestrator } from './orchestrator'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { execSync } from 'child_process'
-
-const MODEL_ID = 'us.anthropic.claude-sonnet-4-6'
+import { getProvider } from './providers'
+import type { LLMProvider, LLMMessage, LLMTool, ProviderSettings } from './providers'
 
 const SYSTEM_PROMPT = `You are Overwatch, an orchestrator agent supervising multiple AI coding sessions running in parallel.
 
@@ -34,35 +32,34 @@ Be concise and direct. Keep responses under 200 words unless the user asks for d
 type ToolDef = {
   name: string
   description: string
-  inputSchema: unknown
+  inputSchema: Record<string, unknown>
   handler: (input: Record<string, unknown>) => string
 }
 
 export class OverwatchAgent {
-  private client: BedrockRuntimeClient
+  private provider: LLMProvider
   private tools: ToolDef[] = []
   private mcpClients: Array<{ name: string; client: Client; tools: ToolDef[] }> = []
-  private messages: Array<{ role: string; content: unknown }> = []
+  private messages: LLMMessage[] = []
   private systemPrompt: string = SYSTEM_PROMPT
   private abortController: AbortController | null = null
 
+  constructor() {
+    this.provider = getProvider({ provider: 'bedrock', awsRegion: 'us-west-2' })
+  }
+
+  configure(settings: ProviderSettings): void {
+    if (settings.provider === 'bedrock') {
+      process.env.AWS_PROFILE = settings.awsProfile ?? 'default'
+      process.env.AWS_REGION = settings.awsRegion ?? 'us-west-2'
+    }
+    this.provider = getProvider(settings)
+  }
+
   injectEvent(summary: string, sessionId?: string, tabId?: string): void {
     const meta = [sessionId && `sessionId: ${sessionId}`, tabId && `tabId: ${tabId}`].filter(Boolean).join(', ')
-    this.messages.push({ role: 'user', content: [{ text: `[EVENT]${meta ? ` (${meta})` : ''} ${summary}` }] })
-    this.messages.push({ role: 'assistant', content: [{ text: 'Noted.' }] })
-  }
-
-  constructor(region = 'us-west-2', profile?: string) {
-    const opts: { region: string; credentials?: ReturnType<typeof fromIni> } = { region }
-    if (profile && profile !== 'default') opts.credentials = fromIni({ profile })
-    this.client = new BedrockRuntimeClient(opts)
-  }
-
-  configure(region: string, profile?: string): void {
-    const p = profile ?? 'default'
-    process.env.AWS_PROFILE = p
-    process.env.AWS_REGION = region
-    this.client = new BedrockRuntimeClient({ region, credentials: fromIni({ profile: p }) })
+    this.messages.push({ role: 'user', content: [{ type: 'text', text: `[EVENT]${meta ? ` (${meta})` : ''} ${summary}` }] })
+    this.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] })
   }
 
   start(orchestrator: Orchestrator, contextDir: string): void {
@@ -122,7 +119,6 @@ export class OverwatchAgent {
             return `Error: ${(err as Error).message}`
           }
 
-          // Send the task to the agent after a short delay (let PTY initialize)
           if (agentType !== 'terminal') {
             setTimeout(() => {
               const tab = session.tabs[0]
@@ -175,7 +171,6 @@ export class OverwatchAgent {
   }
 
   async connectMcpServers(servers: Array<{ name: string; url?: string; command?: string; args?: string[]; env?: Record<string, string> }>): Promise<void> {
-    // Disconnect existing
     for (const mc of this.mcpClients) { try { await mc.client.close() } catch {} }
     this.mcpClients = []
 
@@ -187,7 +182,6 @@ export class OverwatchAgent {
         const client = new Client({ name: 'overwatch', version: '0.1.0' })
 
         if (server.command) {
-          // Stdio transport
           const transport = new StdioClientTransport({
             command: server.command,
             args: server.args ?? [],
@@ -195,7 +189,6 @@ export class OverwatchAgent {
           })
           await client.connect(transport)
         } else if (server.url) {
-          // HTTP transport
           const transport = new StreamableHTTPClientTransport(new URL(server.url))
           await client.connect(transport)
         } else {
@@ -203,12 +196,11 @@ export class OverwatchAgent {
         }
 
         const { tools: mcpTools } = await client.listTools()
-
         const toolDefs: ToolDef[] = mcpTools.map(t => ({
           name: `${server.name}__${t.name}`,
           description: `[${server.name}] ${t.description ?? t.name}`,
-          inputSchema: t.inputSchema ?? { type: 'object', properties: {}, required: [] },
-          handler: () => '' // handled via executeTool
+          inputSchema: (t.inputSchema ?? { type: 'object', properties: {}, required: [] }) as Record<string, unknown>,
+          handler: () => ''
         }))
 
         this.mcpClients.push({ name: server.name, client, tools: toolDefs })
@@ -219,12 +211,12 @@ export class OverwatchAgent {
     }
   }
 
-  private getAllTools(): ToolDef[] {
-    return [...this.tools, ...this.mcpClients.flatMap(mc => mc.tools)]
+  private getAllTools(): LLMTool[] {
+    const all = [...this.tools, ...this.mcpClients.flatMap(mc => mc.tools)]
+    return all.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
   }
 
   private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-    // Check if it's an MCP tool
     for (const mc of this.mcpClients) {
       const mcpTool = mc.tools.find(t => t.name === name)
       if (mcpTool) {
@@ -235,8 +227,6 @@ export class OverwatchAgent {
         } catch (e) { return `Error: ${(e as Error).message}` }
       }
     }
-
-    // Local tool
     const toolDef = this.tools.find(t => t.name === name)
     if (!toolDef) return 'Tool not found'
     try { return toolDef.handler(input) }
@@ -252,85 +242,48 @@ export class OverwatchAgent {
 
   async ask(message: string): Promise<string> {
     const win = BrowserWindow.getAllWindows()[0]
-    this.messages.push({ role: 'user', content: [{ text: message }] })
+    this.messages.push({ role: 'user', content: [{ type: 'text', text: message }] })
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
-    const allTools = this.getAllTools()
-    const toolConfig = {
-      tools: allTools.map(t => ({ toolSpec: { name: t.name, description: t.description, inputSchema: { json: t.inputSchema } } }))
-    }
+    const tools = this.getAllTools()
 
     try {
       let fullText = ''
 
       while (true) {
         if (signal.aborted) break
-        console.log('[overwatch] Calling Bedrock, region:', process.env.AWS_REGION, 'profile:', process.env.AWS_PROFILE)
-        const response = await this.client.send(new ConverseStreamCommand({
-          modelId: MODEL_ID,
-          system: [{ text: this.systemPrompt }],
-          messages: this.messages as never,
-          toolConfig: toolConfig as never
-        }), { abortSignal: signal })
 
-        let assistantText = ''
-        let toolUse: { toolUseId: string; name: string; input: string } | null = null
-        let currentToolId = ''
-        let currentToolName = ''
-        let toolInput = ''
+        const result = await this.provider.stream({
+          system: this.systemPrompt,
+          messages: this.messages,
+          tools,
+          signal,
+          onText: (chunk) => { fullText += chunk; win?.webContents.send('overwatch:chat-stream', chunk) },
+          onToolCall: (name, input) => win?.webContents.send('overwatch:tool-call', { name, input })
+        })
 
-        if (response.stream) {
-          for await (const event of response.stream) {
-            if (event.contentBlockDelta?.delta?.text) {
-              const t = event.contentBlockDelta.delta.text
-              assistantText += t
-              fullText += t
-              win?.webContents.send('overwatch:chat-stream', t)
-            }
-            if (event.contentBlockStart?.start?.toolUse) {
-              currentToolId = event.contentBlockStart.start.toolUse.toolUseId ?? ''
-              currentToolName = event.contentBlockStart.start.toolUse.name ?? ''
-              toolInput = ''
-            }
-            if (event.contentBlockDelta?.delta?.toolUse) {
-              toolInput += event.contentBlockDelta.delta.toolUse.input ?? ''
-            }
-            if (event.contentBlockStop && currentToolId) {
-              toolUse = { toolUseId: currentToolId, name: currentToolName, input: toolInput }
-              currentToolId = ''
-            }
-          }
-        }
-
-        if (!toolUse) {
-          this.messages.push({ role: 'assistant', content: [{ text: assistantText }] })
+        if (!result.toolCall) {
+          this.messages.push({ role: 'assistant', content: [{ type: 'text', text: result.text }] })
           break
         }
 
-        // Notify renderer about tool call
-        win?.webContents.send('overwatch:tool-call', { name: toolUse.name, input: toolUse.input })
+        const { id: toolUseId, name: toolName, input: toolInput } = result.toolCall
+        const toolResult = await this.executeTool(toolName, JSON.parse(toolInput || '{}'))
 
-        const toolDef = allTools.find(t => t.name === toolUse!.name)
-        let toolResult = 'Tool not found'
-        if (toolDef) {
-          toolResult = await this.executeTool(toolUse.name, JSON.parse(toolUse.input || '{}'))
-        }
-
-        // Notify renderer about tool result (summarized)
         const summary = toolResult.length > 200 ? toolResult.slice(0, 200) + '...' : toolResult
-        win?.webContents.send('overwatch:tool-result', { name: toolUse.name, result: summary })
+        win?.webContents.send('overwatch:tool-result', { name: toolName, result: summary })
 
         this.messages.push({
           role: 'assistant',
           content: [
-            ...(assistantText ? [{ text: assistantText }] : []),
-            { toolUse: { toolUseId: toolUse.toolUseId, name: toolUse.name, input: JSON.parse(toolUse.input || '{}') } }
+            ...(result.text ? [{ type: 'text' as const, text: result.text }] : []),
+            { type: 'tool_use' as const, id: toolUseId, name: toolName, input: JSON.parse(toolInput || '{}') }
           ]
         })
         this.messages.push({
           role: 'user',
-          content: [{ toolResult: { toolUseId: toolUse.toolUseId, content: [{ text: toolResult }] } }]
+          content: [{ type: 'tool_result' as const, tool_use_id: toolUseId, content: toolResult }]
         })
       }
 
@@ -338,9 +291,9 @@ export class OverwatchAgent {
       return fullText || 'Done.'
     } catch (err) {
       const errMsg = (err as Error).message ?? String(err)
-      const isBedrockAuth = /AccessDenied|UnrecognizedClient|InvalidClientToken|ExpiredToken|NoCredential|could not be found|not authorized/i.test(errMsg)
-      const msg = isBedrockAuth
-        ? `⚠️ **Bedrock access failed** — check your AWS credentials and region in Settings.\n\n\`${errMsg}\``
+      const isAuthError = /AccessDenied|UnrecognizedClient|InvalidClientToken|ExpiredToken|NoCredential|could not be found|not authorized|invalid x-api-key|authentication/i.test(errMsg)
+      const msg = isAuthError
+        ? `⚠️ **Provider access failed** — check your credentials in Settings.\n\n\`${errMsg}\``
         : `⚠️ **Agent error** — ${errMsg}`
       console.error('[overwatch] Agent error:', err)
       win?.webContents.send('overwatch:chat-stream', msg)

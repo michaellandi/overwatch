@@ -36,8 +36,8 @@ declare global {
         onToolResult: (callback: (data: { name: string; result: string }) => void) => () => void
       }
       settings: {
-        get: () => Promise<{ contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; awsProfile?: string; awsRegion?: string; isFirstRun?: boolean }>
-        set: (settings: { contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; awsProfile?: string; awsRegion?: string }) => Promise<boolean>
+        get: () => Promise<{ contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; provider?: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsProfile?: string; awsRegion?: string; isFirstRun?: boolean }>
+        set: (settings: { contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; provider?: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsProfile?: string; awsRegion?: string }) => Promise<boolean>
       }
     }
   }

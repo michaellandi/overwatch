@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'fs'
 
-const BEDROCK_AUTH_RE = /AccessDenied|UnrecognizedClient|InvalidClientToken|ExpiredToken|NoCredential|could not be found|not authorized/i
+// Covers both Bedrock and Anthropic auth patterns now that we have multi-provider support
+const AUTH_ERROR_RE = /AccessDenied|UnrecognizedClient|InvalidClientToken|ExpiredToken|NoCredential|could not be found|not authorized|invalid x-api-key|authentication/i
 
-describe('Bedrock error visibility', () => {
+describe('Provider error visibility', () => {
   describe('summarizeBlocked fallback includes error detail', () => {
     const source = readFileSync('./src/main/orchestrator.ts', 'utf-8')
     const catchStart = source.indexOf('[summarize] error:')
@@ -13,8 +14,8 @@ describe('Bedrock error visibility', () => {
       expect(catchBlock).toContain('errMsg')
     })
 
-    it('labels it as Bedrock unavailable', () => {
-      expect(catchBlock).toContain('Bedrock unavailable')
+    it('labels it as Provider unavailable', () => {
+      expect(catchBlock).toContain('Provider unavailable')
     })
 
     it('returns a string that includes the error', () => {
@@ -22,17 +23,17 @@ describe('Bedrock error visibility', () => {
     })
   })
 
-  describe('ask() surfaces Bedrock auth failures distinctly', () => {
+  describe('ask() surfaces auth failures distinctly', () => {
     const source = readFileSync('./src/main/strands-agent.ts', 'utf-8')
     const catchStart = source.indexOf('[overwatch] Agent error:')
     const catchBlock = source.slice(catchStart - 400, catchStart + 200)
 
     it('checks for auth-related error patterns', () => {
-      expect(catchBlock).toContain('isBedrockAuth')
+      expect(catchBlock).toContain('isAuthError')
     })
 
     it('auth errors direct user to Settings', () => {
-      expect(catchBlock).toContain('check your AWS credentials and region in Settings')
+      expect(catchBlock).toContain('check your credentials in Settings')
     })
 
     it('non-auth errors use a generic agent error label', () => {
@@ -57,8 +58,10 @@ describe('Bedrock error visibility', () => {
       'NoCredentialProviders: no valid providers in chain',
       'Profile could not be found',
       'User is not authorized to perform this operation',
+      'invalid x-api-key',
+      'authentication_error: invalid API key',
     ])('classifies as auth error: %s', (msg) => {
-      expect(BEDROCK_AUTH_RE.test(msg)).toBe(true)
+      expect(AUTH_ERROR_RE.test(msg)).toBe(true)
     })
 
     it.each([
@@ -68,7 +71,7 @@ describe('Bedrock error visibility', () => {
       'Network error: ECONNREFUSED',
       'Error: stream closed unexpectedly',
     ])('does not classify as auth error: %s', (msg) => {
-      expect(BEDROCK_AUTH_RE.test(msg)).toBe(false)
+      expect(AUTH_ERROR_RE.test(msg)).toBe(false)
     })
   })
 })

@@ -84,7 +84,7 @@ describe('Event plumbing', () => {
     })
 
     it('pushes a "Noted." assistant response after event', () => {
-      expect(source).toContain("role: 'assistant', content: [{ text: 'Noted.' }]")
+      expect(source).toContain("{ type: 'text', text: 'Noted.' }")
     })
   })
 

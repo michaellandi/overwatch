@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { execSync } from 'child_process'
-import { Orchestrator, configureBedrock } from './orchestrator'
+import { Orchestrator, configureProvider } from './orchestrator'
 import { startMcpServer } from './mcp-server'
 
 // Resolve user's full PATH from their login shell (bundled apps don't inherit it)
@@ -136,16 +136,22 @@ app.whenReady().then(async () => {
   const settingsPath = join(app.getPath('userData'), 'settings.json')
 
   interface McpServerConfig { name: string; url?: string; command?: string; args?: string[]; env?: Record<string, string> }
-  interface Settings { contextDir: string; mcpServers: McpServerConfig[]; inactivityMinutes?: number; awsProfile?: string; awsRegion?: string }
-
-  const DEFAULT_MCP_SERVERS: McpServerConfig[] = []
+  interface Settings {
+    contextDir: string
+    mcpServers: McpServerConfig[]
+    inactivityMinutes?: number
+    provider?: 'bedrock' | 'anthropic'
+    anthropicApiKey?: string
+    awsProfile?: string
+    awsRegion?: string
+  }
 
   function loadSettings(): Settings {
     try {
       const s = JSON.parse(readFileSync(settingsPath, 'utf-8'))
       return { ...s, mcpServers: s.mcpServers ?? [] }
     }
-    catch { return { contextDir: join(app.getPath('home'), 'Desktop/brain'), mcpServers: DEFAULT_MCP_SERVERS } }
+    catch { return { contextDir: join(app.getPath('home'), 'Desktop/brain'), mcpServers: [], provider: 'bedrock' } }
   }
 
   const isFirstRun = !require('fs').existsSync(settingsPath)
@@ -155,13 +161,21 @@ app.whenReady().then(async () => {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
   }
 
+  function applyProviderSettings(s: Settings): void {
+    const providerSettings = {
+      provider: s.provider ?? 'bedrock',
+      anthropicApiKey: s.anthropicApiKey,
+      awsRegion: s.awsRegion ?? 'us-west-2',
+      awsProfile: s.awsProfile
+    } as const
+    agent.configure(providerSettings)
+    configureProvider(providerSettings)
+  }
+
   const settings = loadSettings()
   mkdirSync(settings.contextDir, { recursive: true })
   if (settings.inactivityMinutes) orchestrator.setInactivityTimeout(settings.inactivityMinutes)
-  const region = settings.awsRegion ?? 'us-west-2'
-  const profile = settings.awsProfile
-  agent.configure(region, profile)
-  configureBedrock(region, profile)
+  applyProviderSettings(settings)
   agent.start(orchestrator, settings.contextDir)
   orchestrator.onEvent((summary, sessionId, tabId) => agent.injectEvent(summary, sessionId, tabId))
   if (settings.mcpServers?.length > 0) {
@@ -179,14 +193,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('settings:get', () => ({ ...loadSettings(), isFirstRun }))
   ipcMain.handle('settings:set', (_e, newSettings: Settings) => {
     try {
-      console.log('[overwatch] settings:set called, awsProfile:', newSettings.awsProfile, 'awsRegion:', newSettings.awsRegion)
+      console.log('[overwatch] settings:set provider:', newSettings.provider)
       saveSettings(newSettings)
       mkdirSync(newSettings.contextDir, { recursive: true })
       if (newSettings.inactivityMinutes) orchestrator.setInactivityTimeout(newSettings.inactivityMinutes)
-      const r = newSettings.awsRegion ?? 'us-west-2'
-      const p = newSettings.awsProfile
-      agent.configure(r, p)
-      configureBedrock(r, p)
+      applyProviderSettings(newSettings)
       agent.start(orchestrator, newSettings.contextDir)
       if (newSettings.mcpServers?.length > 0) {
         agent.connectMcpServers(newSettings.mcpServers)
