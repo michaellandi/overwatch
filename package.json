@@ -55,6 +55,7 @@
     "directories": {
       "output": "dist"
     },
+    "artifactName": "${productName}.${ext}",
     "files": [
       "out/**/*",
       "package.json"
