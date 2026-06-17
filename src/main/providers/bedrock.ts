@@ -1,8 +1,17 @@
 import { BedrockRuntimeClient, ConverseCommand, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime'
 import { fromIni } from '@aws-sdk/credential-providers'
-import type { LLMProvider, LLMMessage, LLMTool, StreamResult } from './types'
+import type { LLMProvider, LLMMessage, LLMContentBlock, LLMTool, StreamResult } from './types'
 
 const MODEL_ID = 'us.anthropic.claude-sonnet-4-6'
+
+// Bedrock's ConverseCommand expects content blocks keyed by block type
+// (e.g. { toolUse: {...} }), not our internal Anthropic-shaped
+// { type: 'tool_use', ... } blocks — translate before sending.
+function toBedrockContent(block: LLMContentBlock): Record<string, unknown> {
+  if (block.type === 'text') return { text: block.text }
+  if (block.type === 'tool_use') return { toolUse: { toolUseId: block.id, name: block.name, input: block.input } }
+  return { toolResult: { toolUseId: block.tool_use_id, content: [{ text: block.content }] } }
+}
 
 export class BedrockProvider implements LLMProvider {
   private client: BedrockRuntimeClient
@@ -21,10 +30,17 @@ export class BedrockProvider implements LLMProvider {
     onText: (chunk: string) => void
     onToolCall: (name: string, input: string) => void
   }): Promise<StreamResult> {
+    const messages = opts.messages.map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string'
+        ? [{ text: m.content }]
+        : m.content.map(toBedrockContent)
+    }))
+
     const response = await this.client.send(new ConverseStreamCommand({
       modelId: MODEL_ID,
       system: [{ text: opts.system }],
-      messages: opts.messages as never,
+      messages: messages as never,
       toolConfig: {
         tools: opts.tools.map(t => ({
           toolSpec: { name: t.name, description: t.description, inputSchema: { json: t.inputSchema } }
