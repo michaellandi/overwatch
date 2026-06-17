@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { execSync } from 'child_process'
 import { Orchestrator, configureProvider } from './orchestrator'
 import { startMcpServer } from './mcp-server'
+import { getProvider, type ProviderSettings } from './providers'
 
 // Resolve user's full PATH from their login shell (bundled apps don't inherit it)
 try {
@@ -191,6 +192,20 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('settings:get', () => ({ ...loadSettings(), isFirstRun }))
+  ipcMain.handle('settings:test-connection', async (_e, providerSettings: ProviderSettings) => {
+    try {
+      const provider = getProvider(providerSettings)
+      const reply = await provider.complete({
+        system: 'Reply with exactly one word: OK',
+        prompt: 'Connection test — reply with exactly one word: OK',
+        maxTokens: 10
+      })
+      if (!reply.trim()) throw new Error('Provider returned an empty response')
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message ?? String(err) }
+    }
+  })
   ipcMain.handle('settings:set', (_e, newSettings: Settings) => {
     try {
       console.log('[overwatch] settings:set provider:', newSettings.provider)

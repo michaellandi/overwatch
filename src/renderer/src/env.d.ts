@@ -38,6 +38,7 @@ declare global {
       settings: {
         get: () => Promise<{ contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; provider?: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsProfile?: string; awsRegion?: string; isFirstRun?: boolean }>
         set: (settings: { contextDir: string; enabledAgents?: string[]; enabledIntegrations?: string[]; mcpServers?: Array<{ name: string; command: string; args?: string[] }>; inactivityMinutes?: number; provider?: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsProfile?: string; awsRegion?: string }) => Promise<boolean>
+        testConnection: (providerSettings: { provider: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsRegion?: string; awsProfile?: string }) => Promise<{ ok: true } | { ok: false; error: string }>
       }
     }
   }

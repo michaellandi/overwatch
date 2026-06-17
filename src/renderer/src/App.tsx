@@ -158,13 +158,45 @@ export function App(): React.ReactElement {
   )
 }
 
+type TestState = 'idle' | 'testing' | 'ok' | 'error'
+
 function SetupWizard({ onComplete }: { onComplete: () => void }): React.ReactElement {
+  const [provider, setProvider] = useState<'bedrock' | 'anthropic'>('bedrock')
   const [profile, setProfile] = useState('default')
   const [region, setRegion] = useState('us-west-2')
+  const [anthropicApiKey, setAnthropicApiKey] = useState('')
+  const [testState, setTestState] = useState<TestState>('idle')
+  const [testError, setTestError] = useState('')
 
-  const save = async (): Promise<void> => {
+  // Any change to the provider config invalidates a prior successful test.
+  const resetTest = (): void => { setTestState('idle'); setTestError('') }
+
+  const testConnection = async (): Promise<void> => {
+    setTestState('testing')
+    setTestError('')
+    const result = await window.overwatch.settings.testConnection({
+      provider,
+      anthropicApiKey: provider === 'anthropic' ? anthropicApiKey : undefined,
+      awsProfile: provider === 'bedrock' ? profile : undefined,
+      awsRegion: provider === 'bedrock' ? region : undefined
+    })
+    if (result.ok) {
+      setTestState('ok')
+    } else {
+      setTestState('error')
+      setTestError(result.error)
+    }
+  }
+
+  const finish = async (): Promise<void> => {
     const current = await window.overwatch.settings.get()
-    await window.overwatch.settings.set({ ...current, awsProfile: profile, awsRegion: region })
+    await window.overwatch.settings.set({
+      ...current,
+      provider,
+      anthropicApiKey: provider === 'anthropic' ? anthropicApiKey : current.anthropicApiKey,
+      awsProfile: provider === 'bedrock' ? profile : current.awsProfile,
+      awsRegion: provider === 'bedrock' ? region : current.awsRegion
+    })
     onComplete()
   }
 
@@ -174,26 +206,52 @@ function SetupWizard({ onComplete }: { onComplete: () => void }): React.ReactEle
         <h3 className="modal-title">Welcome to Overwatch</h3>
         <div className="settings-content">
           <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>
-            Configure your AWS credentials to connect to Bedrock. You can change these later in Settings.
+            Choose and verify the LLM provider Overwatch uses to summarize and coordinate your sessions. You can change this later in Settings.
           </p>
           <div className="settings-field">
-            <label>AWS Profile</label>
-            <input type="text" value={profile} onChange={e => setProfile(e.target.value)} placeholder="default" />
+            <label>LLM Provider</label>
+            <div className="agent-picker">
+              {([['bedrock', 'AWS Bedrock'], ['anthropic', 'Anthropic']] as const).map(([id, label]) => (
+                <button key={id} className={`agent-option ${provider === id ? 'active' : ''}`} onClick={() => { setProvider(id); resetTest() }}>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
+          {provider === 'anthropic' ? (
+            <div className="settings-field">
+              <label>Anthropic API Key</label>
+              <input type="password" value={anthropicApiKey} onChange={e => { setAnthropicApiKey(e.target.value); resetTest() }} placeholder="sk-ant-..." />
+            </div>
+          ) : (
+            <>
+              <div className="settings-field">
+                <label>AWS Profile</label>
+                <input type="text" value={profile} onChange={e => { setProfile(e.target.value); resetTest() }} placeholder="default" />
+              </div>
+              <div className="settings-field">
+                <label>AWS Region</label>
+                <select value={region} onChange={e => { setRegion(e.target.value); resetTest() }}>
+                  <option value="us-east-1">us-east-1</option>
+                  <option value="us-west-2">us-west-2</option>
+                  <option value="eu-west-1">eu-west-1</option>
+                  <option value="eu-central-1">eu-central-1</option>
+                  <option value="ap-northeast-1">ap-northeast-1</option>
+                  <option value="ap-southeast-1">ap-southeast-1</option>
+                </select>
+              </div>
+            </>
+          )}
           <div className="settings-field">
-            <label>AWS Region</label>
-            <select value={region} onChange={e => setRegion(e.target.value)}>
-              <option value="us-east-1">us-east-1</option>
-              <option value="us-west-2">us-west-2</option>
-              <option value="eu-west-1">eu-west-1</option>
-              <option value="eu-central-1">eu-central-1</option>
-              <option value="ap-northeast-1">ap-northeast-1</option>
-              <option value="ap-southeast-1">ap-southeast-1</option>
-            </select>
+            <button className="btn-settings-cancel" onClick={testConnection} disabled={testState === 'testing' || (provider === 'anthropic' && !anthropicApiKey)}>
+              {testState === 'testing' ? 'Testing…' : 'Test Connection'}
+            </button>
+            {testState === 'ok' && <p style={{ fontSize: '13px', color: 'var(--text-success, #4caf50)', marginTop: '8px' }}>✓ Connected successfully</p>}
+            {testState === 'error' && <p style={{ fontSize: '13px', color: 'var(--text-error, #e57373)', marginTop: '8px' }}>⚠ {testError}</p>}
           </div>
         </div>
         <div className="settings-actions">
-          <button className="btn-settings-save" onClick={save}>Get Started</button>
+          <button className="btn-settings-save" onClick={finish} disabled={testState !== 'ok'}>Get Started</button>
         </div>
       </div>
     </div>

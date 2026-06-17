@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('overwatch', {
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
-    set: (settings: { contextDir: string }) => ipcRenderer.invoke('settings:set', settings)
+    set: (settings: { contextDir: string }) => ipcRenderer.invoke('settings:set', settings),
+    testConnection: (providerSettings: { provider: 'bedrock' | 'anthropic'; anthropicApiKey?: string; awsRegion?: string; awsProfile?: string }) =>
+      ipcRenderer.invoke('settings:test-connection', providerSettings)
   }
 })

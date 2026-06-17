@@ -475,6 +475,7 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+.btn-settings-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-settings-save {
   background: var(--accent);
@@ -488,7 +489,8 @@ body {
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.btn-settings-save:hover { opacity: 0.85; }
+.btn-settings-save:hover:not(:disabled) { opacity: 0.85; }
+.btn-settings-save:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .mcp-server-list {
   display: flex;
