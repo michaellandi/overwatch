@@ -19,9 +19,10 @@ function makeClaudeHookCommand(eventType: string): string {
   )
 }
 
-// Kiro hooks: Kiro captures hook stdout and injects it as AI context, so we
-// suppress output with -o /dev/null and use -d '{}' instead of reading stdin
-// (Kiro does not pipe event data to the hook's stdin).
+// Kiro hooks: like Claude, Kiro pipes the event JSON to the hook command's
+// stdin. Suppress stdout with -o /dev/null since Kiro captures hook stdout
+// and injects it as AI context (our hook server's response body is empty,
+// but this stays safe if that ever changes).
 function makeKiroHookCommand(eventType: string): string {
   return (
     'curl -sf -X POST ' +
@@ -30,7 +31,7 @@ function makeKiroHookCommand(eventType: string): string {
     '-H "X-Overwatch-Session-Id: $OVERWATCH_SESSION_ID" ' +
     '-H "X-Overwatch-Tab-Id: $OVERWATCH_TAB_ID" ' +
     `-H "X-Overwatch-Event-Type: ${eventType}" ` +
-    "-d '{}' " +
+    '-d @- ' +
     `-o /dev/null "http://127.0.0.1:$${MARKER}/hook" || true`
   )
 }
@@ -103,6 +104,7 @@ const KIRO_HOOKS_PATH = '.kiro/agents/overwatch.json'
 
 // Kiro uses the minimal format: hooks[event] = [{ command }]
 const KIRO_SPECS = [
+  { hookKey: 'agentSpawn',       eventType: 'session' },
   { hookKey: 'userPromptSubmit', eventType: 'start' },
   { hookKey: 'preToolUse',       eventType: 'start' },
   { hookKey: 'postToolUse',      eventType: 'start' },
@@ -123,6 +125,8 @@ export function writeKiroHooks(cwd: string): void {
 
   config.name = 'overwatch'
   config.description = 'Overwatch lifecycle hooks'
+  // Without an explicit "tools" field, Kiro grants the agent zero tools.
+  if (config.tools === undefined) config.tools = ['*']
   config.hooks = hooks
 
   mkdirSync(join(cwd, '.kiro', 'agents'), { recursive: true })

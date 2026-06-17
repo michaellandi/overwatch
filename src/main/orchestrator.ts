@@ -368,6 +368,14 @@ export class Orchestrator {
     session.lastActivityAt = Date.now()
 
     if (event.eventType === 'start') {
+      // For Kiro, 'start' hooks (userPromptSubmit/preToolUse/postToolUse) fire on every
+      // turn regardless of whether the PTY-based detector currently has the session
+      // blocked on an approval prompt — they're not a signal that approval was granted.
+      // Only hook-managed tabs (Claude) use 'start' as the unblock signal.
+      if (!this.hookManagedTabs.has(event.tabId)) {
+        this.save()
+        return
+      }
       if (session.state === 'blocked' && session.blockedReason === 'approval') {
         for (const tab of session.tabs) this.buffers.get(tab.id)?.clear()
         this.notify({ type: 'session:resumed', sessionId: session.id, summary: `Session "${session.name}" resumed` })
@@ -396,15 +404,17 @@ export class Orchestrator {
         const lastLines = buffer
           ? buffer.last(50).filter(l => !/^[─━─\-=]{5,}$/.test(l.trim()) && !/^[◔◑◕●]\s/.test(l.trim()))
           : []
-        const message = typeof event.body.message === 'string' ? event.body.message : ''
-        const summaryHint = message || lastLines.slice(-5).join(' ')
-        summarizeBlocked(session.name, summaryHint ? [summaryHint] : lastLines).then(summary => {
+        // Claude's hook "message" (e.g. "Claude needs your permission") is generic boilerplate,
+        // not a description of the actual tool/action — the real detail lives in the terminal
+        // buffer, so always summarize from that and only use the message as a fallback.
+        const tab = session.tabs.find(t => t.id === event.tabId)
+        summarizeBlocked(session.name, lastLines.length > 0 ? lastLines : [typeof event.body.message === 'string' ? event.body.message : '']).then(summary => {
           if (session.state !== 'blocked' || session.blockedReason !== 'approval') return
           this.notify({
             type: 'session:approval',
             sessionId: session.id,
             tabId: event.tabId,
-            summary: `⚡ **${session.name}** — ${summary}`
+            summary: `⚡ **${session.name}**${tab ? ` [${tab.name}]` : ''} — ${summary}`
           })
         })
       }
