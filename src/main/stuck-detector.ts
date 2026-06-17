@@ -47,8 +47,11 @@ const APPROVAL_PATTERNS: RegExp[] = [
   /Do you want to/i,
   /allow once/i,
   /trust all tools/i,
-  // Claude Code permission dialog footer (always present)
-  /Esc to cancel/i,
+  // Claude Code permission dialog footer (always present). Must be the full
+  // "Esc to cancel · Tab to amend" phrase — bare "esc to cancel" also shows up
+  // in Kiro's thinking spinner ("Thinking... (esc to cancel)") and would
+  // false-positive on ordinary processing.
+  /Esc to cancel.*Tab to amend/i,
   // ❯ cursor on a known permission dialog option, with optional numbering (e.g. "❯ 1. Yes")
   /❯\s+(\d+\.\s+)?(yes|no|trust|allow|deny|approve|reject)/i,
   // Kiro prompts — only patterns that appear exclusively on the approval screen,
